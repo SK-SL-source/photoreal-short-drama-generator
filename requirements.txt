@@ -1,0 +1,15 @@
+# 腳本用 ComfyUI 自己的 Python 環境跑（在 ComfyUI 內附的 Python 3.11.9 測過）。
+# The scripts run in ComfyUI's own Python environment (tested with its bundled Python 3.11.9).
+
+# ComfyUI 本來就有（already part of ComfyUI）
+numpy
+av
+Pillow
+
+# 只有 驗片量測.py drift --roi 要用；環境裡已經有任何一種 OpenCV（import cv2 可以用）就不要再裝
+# Only needed for 驗片量測.py drift --roi; skip it if any OpenCV build already imports as cv2
+opencv-python
+
+# 系統沒有 ffmpeg 時才要裝：腳本會自動用它附的那一支
+# Only needed when there is no system ffmpeg; the scripts then use the one it bundles
+imageio-ffmpeg
