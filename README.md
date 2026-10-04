@@ -46,7 +46,7 @@ skill 內附規則核心、提示詞 lint、鏡頭表檢查、開工檢查、佇
 1. 放到 Claude Code 的 skill 資料夾：
 
    ```powershell
-   git clone <這個 repo 的網址> "$env:USERPROFILE\.claude\skills\photoreal-short-drama-generator"
+   git clone https://github.com/SK-SL-source/photoreal-short-drama-generator.git "$env:USERPROFILE\.claude\skills\photoreal-short-drama-generator"
    ```
 
 2. 在 `scripts\` 建 `設定.local.json`，寫這台機器的值（這個檔不會上傳）：
@@ -165,7 +165,7 @@ The skill bundles a rules core, a prompt lint, a shot-table check, a setup check
 
 ### Install
 
-1. Clone into Claude Code's skill folder: `git clone <repo URL> "$env:USERPROFILE\.claude\skills\photoreal-short-drama-generator"` (PowerShell).
+1. Clone into Claude Code's skill folder: `git clone https://github.com/SK-SL-source/photoreal-short-drama-generator.git "$env:USERPROFILE\.claude\skills\photoreal-short-drama-generator"` (PowerShell).
 2. Create `scripts\設定.local.json` with this machine's values (it is never uploaded), as in the example above. `comfy_dir` is the ComfyUI folder (it contains `input` and `output`). `python` is ComfyUI's own Python: `python_embeded\python.exe` in the portable build, usually `.venv\Scripts\python.exe` inside the ComfyUI folder for the desktop app and manual installs. `ffmpeg` can be left out when `ffmpeg -version` works in a terminal, or after running `python -m pip install imageio-ffmpeg` with ComfyUI's Python; otherwise give the full path to ffmpeg.exe. Use `/` or `\\` in paths; a single `\` is invalid JSON, and the setup check names the line if the file has an error. Model file names that differ from the defaults go under `models`.
 3. With ComfyUI running, run `scripts\開工檢查.py` with that Python and fix every ❌. ⚠️ means one feature is unavailable; ❌ means clips cannot be made.
 
