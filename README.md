@@ -1,5 +1,9 @@
 # 仿真人短劇成片 Photoreal Short Drama Generator
 
+**Photorealistic AI Short Drama Generator — a local MiniMax H3 and ComfyUI production workflow for script, storyboard, prompt generation, video generation, QA, editing and final delivery.**
+
+**Claude Code Skill · MiniMax H3 · ComfyUI · AI Filmmaking · AI Video Generation**
+
 在本機 ComfyUI（MiniMax H3）上，照五站把短劇創意或劇本做成仿真人短劇（寫實 3D 或實拍電影感）的 Claude Code skill。
 
 [English](#english)
@@ -141,7 +145,7 @@ MIT，見 [LICENSE](LICENSE)。事件表、從敘事目的推鏡頭、連戲檢�
 
 ## English
 
-A Claude Code skill that turns a short-drama idea or script into a photoreal short (3D or live-action look) on a local ComfyUI with MiniMax H3, one station at a time.
+Photoreal Short Drama Generator is a Claude Code skill that turns a short-drama idea or script into a photoreal short (3D or live-action look) on a local ComfyUI with MiniMax H3, one station at a time. It covers the whole script-to-video workflow of AI filmmaking: story and storyboard, prompts, AI video generation with measured clip review, and the edit.
 
 ### What it does
 
