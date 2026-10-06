@@ -25,12 +25,12 @@ When a step here conflicts with those files, or cannot be done, stop and report 
 ## Principles
 
 1. **Every item is decided.** Every part of the frame, every second of a clip and every sound track is written down somewhere, including "deliberately empty" or "deliberately quiet". Whatever nobody decides, the model fills with its average.
-2. **One event per shot.** Two logically separate events are two shots. When the events outnumber the shots agreed at intake, ask the user whether to add shots or merge two events; never squeeze them into one shot yourself.
-3. **Every shot has a narrative purpose**: what the audience knows or feels that they did not a second ago. Shot size, camera position, lens and aperture follow from that purpose.
+2. **A shot never spans two events.** Two logically separate events are two shots; one event may take several shots, one per narrative beat (`references/2A-分鏡敘事.md` §4). When the events outnumber the shots agreed at intake, ask the user whether to add shots or merge two events; never squeeze them into one shot yourself.
+3. **Every shot has a narrative purpose**: a beat (what the audience knows or feels that they did not a second ago), or a hold, delay, orientation or callback whose premise holds. Shot size follows the expression point: the widest size that keeps it fully effective. Camera position, lens and aperture follow from the purpose.
 4. **Move capability limits upstream.** Whatever AI cannot do reliably (readable text, exact counts, exact cut points, mirror detail, piece-by-piece hand work) is changed at the script or storyboard station, not forced in the prompt.
 5. **Prompts are compiled** from approved storyboard cards. The prompt adds nothing the card does not say.
 6. **Review by measurement plus human judgment.** Verdicts are pass, fail or not verified; missing evidence is not a pass.
-7. **Only the user changes the story.** When something cannot be done as written, offer options marked "story change" and wait.
+7. **Only the user changes the story.** When something cannot be done as written, or a storyboard proposal would touch approved content, offer options marked "story change" and wait.
 
 ## Gates, authorization and rework
 
@@ -54,7 +54,7 @@ Create each project under `projects_root` from the settings (ask the user when i
 ```text
 1-劇本.md       brief, story, final lines, event table
 2-鏡頭表.csv    overview, continuity, status (checked with _腳本\檢查鏡頭表.py)
-2-分鏡.md       visual bible, asset list, shot cards, cue sheet
+2-分鏡.md       visual bible, asset list, narrative ledger, shot cards, cue sheet
 資產\           cards, voice files, first frames
 3-提示詞\       one prompt per shot, plus check notes
 4-影片\         clips, review packets (驗片\) and review notes
@@ -73,9 +73,9 @@ Follow `references/1-劇本.md`.
 
 ## Station 2: Storyboard
 
-Follow `references/2-分鏡.md`, the chosen style preset and the audio preset.
+Follow `references/2A-分鏡敘事.md` to decide which shots to make and what each must deliver, then `references/2-分鏡.md`, the chosen style preset and the audio preset.
 - G3 visual bible (every field decided) and assets: cards, asset list, voice files.
-- G4 shot table and shot cards: narrative purpose, camera, action card, sound, first-frame source, the continuity handoff at each cut, and A/B segments where one generation cannot hold the order; the cue sheet when there is music. Run the shot-table check before showing it.
+- G4 shot table and shot cards: the narrative ledger first; on each card the 2A block (beat, expression point, delete test, scale, verdict) and any story-change question it raises; then narrative purpose, camera, action card, sound, first-frame source, the continuity handoff at each cut, and A/B segments where one generation cannot hold the order; the cue sheet when there is music. Run the shot-table check before showing it.
 - G5 keyframes, optional: a shot starts from the previous shot's last frame (relay) or an adjacent approved frame; synthesize a keyframe only when neither exists, with the user's approval. Write what the first frame settles back into the cards.
 
 ## Station 3: Prompts

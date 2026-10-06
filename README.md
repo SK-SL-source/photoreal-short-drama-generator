@@ -12,8 +12,8 @@
 
 Claude 照這個 skill 一站一站做，每一站停下來給你看、等你核可：
 
-1. **劇本**：簡報、故事、定稿台詞，拆成一個事件一鏡的事件表。
-2. **分鏡**：視覺聖經、鏡頭表、分鏡卡（敘事目的、鏡頭、動作卡、首幀從哪裡來、每個切點的連戲交接）。
+1. **劇本**：簡報、故事、定稿台詞，拆成事件表。
+2. **分鏡**：先做敘事判斷（每一鏡的拍和表達點、值不值得一鏡），再出視覺聖經、鏡頭表、分鏡卡（敘事目的、鏡頭、動作卡、首幀從哪裡來、每個切點的連戲交接）。
 3. **提示詞**：從核可的分鏡卡編譯成 H3 提示詞，送件前一定過 lint。
 4. **生成與驗片**：經佇列帳本送件；每條片段先量測、產出驗片包，你在聊天裡逐條回「檔名＋過」或「檔名＋改法」。
 5. **結案**：旁白、分段配樂、粗剪、細剪、成片，每一版都另存無配樂母版。
@@ -107,6 +107,7 @@ scripts/
 
 - 規則核心整理自一份工作室製作規範，和一個提示詞實驗室的對照實驗（一次一個變數、三個 seed），再經過兩個完整的測試製作驗證。標【本機值】的數字是在 RTX 3090 上量的。
 - 只在一個完整製作裡驗證過、沒做三 seed 對照的寫法，另外標成「實戰驗證」。
+- 分鏡敘事（`references/2A-分鏡敘事.md`）標【盲測】的判斷，是多個獨立評審的結論一致：只證明判斷穩定，不代表 H3 做得到。
 - MiniMax 官方的 H3 提示詞指南（MiniMax-H3 的 h3-prompt-writing：`base-en.txt`、`ref-en.txt`）沒有附在這裡；有的話在設定的 `official_guides` 指過去，沒有的話照規則核心 §6 的格式摘要。
 
 ## 限制
@@ -151,8 +152,8 @@ Photoreal Short Drama Generator is a Claude Code skill that turns a short-drama 
 
 Claude works through five stations and stops at each one for your review:
 
-1. **Script**: brief, story, final lines, and an event table with one event per shot.
-2. **Storyboard**: visual bible, shot table and shot cards (narrative purpose, camera, action card, first-frame source, continuity handoff at each cut).
+1. **Script**: brief, story, final lines, and an event table.
+2. **Storyboard**: a narrative pass first (each shot's beat and expression point, and whether it earns a shot), then the visual bible, shot table and shot cards (narrative purpose, camera, action card, first-frame source, continuity handoff at each cut).
 3. **Prompts**: H3 prompts compiled from the approved cards and linted before any render.
 4. **Generate and review**: jobs go through a queue ledger; every clip is measured into a review packet, and you approve or redirect clips one by one in chat.
 5. **Close**: narration, music cues, rough cut, fine cut and the final cut, with a no-music master every time.
@@ -179,7 +180,7 @@ Describe the short you want in Claude Code, or type `/photoreal-short-drama-gene
 
 ### Where the rules come from
 
-The rules core is distilled from a studio's production rules and a prompt lab's controlled tests (one variable per test, three seeds), then checked in two end-to-end test productions. Numbers marked 【本機值】 were measured on an RTX 3090. Patterns verified only in one production are marked as such. MiniMax's official H3 prompt guides are not bundled; point `official_guides` to them if you have them.
+The rules core is distilled from a studio's production rules and a prompt lab's controlled tests (one variable per test, three seeds), then checked in two end-to-end test productions. Numbers marked 【本機值】 were measured on an RTX 3090. Patterns verified only in one production are marked as such. Storyboard judgments marked 【盲測】 (blind test) agreed across independent reviewers; that shows the judgment is stable, not that H3 can render it. MiniMax's official H3 prompt guides are not bundled; point `official_guides` to them if you have them.
 
 ### Limits
 

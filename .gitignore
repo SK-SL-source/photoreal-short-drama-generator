@@ -1,6 +1,7 @@
 # 本機設定與本機測試，不上傳
 scripts/設定.local.json
 scripts/驗片量測_自我測試.py
+references/research/
 
 # Secrets
 .env

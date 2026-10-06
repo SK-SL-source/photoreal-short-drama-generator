@@ -5,6 +5,7 @@
 模式從提示詞自動判斷：有 subject_definitions 段＝參考模式（Ref2VA）；
 第一行是官方對齊句＝I2VA／FL2VA／L2VA；第一行就是 integrated_multimodal_description＝T2VA。各模式只檢查該模式的官方格式。
 專案登記表（SCENE_LANDMARKS、MULTI_STATE_BOARDS、SCENE_PART_OF、CHARACTER_PHRASES）預設是空的，專案要用就在自己 _腳本 的複本裡照註解的格式填。
+景別（規則核心 §4.2、§5.2、§7.5、§7.15）：從 summary 和 [Shot 1] 第一句讀景別詞；中近景以內寫了畫面外的內容逐類 ⚠️，3 類以上 ❌。
 """
 import os, re, sys
 
@@ -41,6 +42,22 @@ KNOWN_NAMES = set()
 PROP_OVERHANDLING = r"one by one|one piece at a time|edge-to-edge|\barrang(?:es|ing)\b (?:them|it|each|the)|rotates? (?:it|the [a-z ]+?) (?:half a turn|a quarter turn)|turns? the (?:open )?book|flips? (?:it|the [a-z ]+?|<Subject \d+>) open|stacks? [a-z ]+? one by one"
 # 同一句裡是「懸空／在物件上方」的描述（指尖在空中逐一點數）不算互動
 NO_CONTACT = r"hover|in the air|above the|without touching"
+# 景別：六個驗證過的景別詞，由長到短比對；level 0＝遠景 … 5＝特寫
+SIZE_TERMS = [("extreme close-up", 5), ("medium close-up", 3), ("extreme wide shot", 0), ("full shot", 1), ("medium shot", 2), ("close-up", 4)]
+SIZE_NAMES = ["遠景", "全景", "中景", "中近景", "近景", "特寫"]
+SIZE_RE = re.compile(r"(?<!tight )\b(" + "|".join(re.escape(t) for t, _ in SIZE_TERMS) + r")\b", re.I)
+# 沒驗證過的說法：認得出來才提醒得到；推得出景別的順便給 level
+ODD_SIZE = {"tight close-up": 5, "big close-up": 5, "close shot": 4, "medium close shot": 3, "wide shot": 0, "long shot": 0}
+ODD_RE = re.compile(r"(?<!extreme )\b(tight close-up|big close-up|medium close shot|close shot|medium-wide shot|medium wide shot|wide shot|long shot)\b", re.I)
+BOUNDARY = re.compile(r"\bThe frame shows\b|\bfills (?:the whole|most of the) frame\b|\bframes <Subject \d+> from\b|\bframes (?:her|him|them) from\b", re.I)
+BOUNDARY_LEVEL = [(r"hairline", 5), (r"collarbones?", 4), (r"middle of (?:her|his) chest|mid-chest", 3), (r"waist|hips", 2), (r"\bfeet\b", 1)]
+# 中近景以內寫了畫面外的東西，H3 會把景別拉寬：單一類 3/3 撐住，3 類 2/3 鬆開，全部疊上 3/3 翻成中景（規則核心 §7.5）
+INTERIOR_ANCHOR = r"indoors inside|reads plainly as an interior"
+AT_LANDMARK = r"\b(?:stands?|standing|sits?|sitting|leans?|leaning) (?:at|by|beside|in front of|behind|against) (?:the|a)\b"
+BELOW_WAIST = r"\b(?:trousers|pants|jeans|skirt|shorts|shoes|sneakers|boots|socks|feet|knees|legs)\b"
+HANDS = r"\b(?:hands?|fingers?|fingertips?|forearms?|wrists?|palms?)\b"  # 手只在近景以內算
+SCENE_WORDS = r"scene sheet|\b(?:room|kitchen|caf[eé]|street|hall|office|apartment|interior|bedroom|corridor|restaurant|shop)\b"
+PERSON_RE = re.compile(r"\b(woman|man|girl|boy|figure|person)\b", re.I)
 
 
 def split_sections(p):
@@ -112,8 +129,63 @@ def _check_sentences(text, E, W):
         if fm: E.append(f"文學修飾「{fm.group(0)}」——只寫鏡頭看得見、聽得見的東西：{sent[:60]}…")
 
 
-def _common(p, dd, snd, music, frames, entry, E, W):
-    """參考模式、基礎模式共用的檢查。dd＝主描述（detailed_description 或 integrated_multimodal_description）"""
+def _check_size(sm, sd, ra, dd, E, W):
+    """景別（規則核心 §4.2、§5.2、§7.5、§7.15）。回傳 level（0 遠景 … 5 特寫；看不出來回 None）"""
+    shot1 = dd.split("[Shot 1]", 1)[1].strip() if "[Shot 1]" in dd else ""
+    first = re.split(r"(?<=[.!?])\s", shot1, maxsplit=1)[0]
+    m_sum, m_first = SIZE_RE.search(sm), SIZE_RE.search(first)
+    t_sum = m_sum.group(1).lower() if m_sum else None
+    t_first = m_first.group(1).lower() if m_first else None
+    if sm and not t_sum:
+        W.append("summary 沒寫景別詞（extreme wide shot／full shot／medium shot／medium close-up／close-up／extreme close-up；規則核心 §4.2）")
+    if shot1 and not t_first:
+        W.append("[Shot 1] 第一句沒寫景別詞——H3 照整支提示詞決定景別，景別詞要放在 [Shot 1] 開頭（規則核心 §4.2）")
+    if t_sum and t_first and t_sum != t_first:
+        W.append(f"summary 寫 {t_sum}、[Shot 1] 寫 {t_first}——兩處的景別詞要一樣")
+    odd = sorted(set(x.lower() for x in ODD_RE.findall(sm + "\n" + dd)))
+    for t in odd:
+        W.append(f"非標準的景別說法「{t}」（沒驗證過）——用 3-提示詞.md §4 的六個景別詞")
+    level = dict(SIZE_TERMS).get(t_first or t_sum)
+    if level is None:
+        level = next((ODD_SIZE[t] for t in odd if t in ODD_SIZE), None)
+    bm = BOUNDARY.search(dd)
+    if not bm:
+        W.append("沒有畫面邊界句（例：The frame shows her from the top of her head to her waist.；規則核心 §4.2）")
+    elif level is None:
+        sent = dd[bm.start(): dd.find(".", bm.end()) + 1]
+        level = next((lv for pat, lv in BOUNDARY_LEVEL if re.search(pat, sent, re.I)), None)
+    if level is None:
+        return None
+    name = SIZE_NAMES[level]
+    if level == 4 and not re.search(r"face fills most of the frame", dd, re.I):
+        W.append("近景（close-up）缺「her face fills most of the frame」（3-提示詞.md §4 每級句型）")
+    if level == 4 and re.search(r"\bhairline\b", dd, re.I):
+        W.append("close-up 卻寫到髮際線的邊界——那是特寫，要寫 extreme close-up（近景＝close-up，特寫＝extreme close-up）")
+    if level == 5:
+        if not re.search(r"outside the frame|cut off by the edges? of the frame", dd, re.I):
+            W.append("特寫沒寫被切掉的部位（例：the top of her head, her neck and her collar are outside the frame；規則核心 §7.15）")
+        if re.search(r"character sheet", sd, re.I):
+            W.append("特寫的角色參考寫成 character sheet——特寫要掛頭肩裁圖（規則核心 §5.2：全身卡 1/3、裁圖 3/3）")
+    if level >= 3:
+        text = sd + "\n" + dd
+        hits = [k for k, pat in (("室內錨句", INTERIOR_ANCHOR), ("站在地標旁", AT_LANDMARK)) if re.search(pat, text, re.I)]
+        if re.search(BELOW_WAIST, text, re.I) or (level >= 4 and re.search(HANDS, text, re.I)):
+            hits.append("手或腰以下的穿著")
+        for ln in sd.splitlines():
+            m = re.match(r"<Subject (\d+)> is (.+)", ln)
+            if m and not PERSON_RE.search(" ".join(m.group(2).split()[:6])) and re.search(SCENE_WORDS, m.group(2), re.I) \
+                    and "blurred" not in m.group(2) and re.search(rf"<Subject {m.group(1)}> \(appears in[^)]*\): fully_preserved", ra):
+                hits.append("場景地標清單")
+                break
+        for k in hits:
+            W.append(f"{name}寫了畫面外的內容：{k}——H3 會把景別拉寬（規則核心 §7.5）")
+        if len(hits) >= 3:
+            E.append(f"{name}寫了 {len(hits)} 類畫面外的內容（{'、'.join(hits)}）——3 類以上會把景別拉寬或翻成中景（規則核心 §7.5）")
+    return level
+
+
+def _common(p, dd, snd, music, frames, entry, E, W, level=None):
+    """參考模式、基礎模式共用的檢查。dd＝主描述（detailed_description 或 integrated_multimodal_description）；level＝景別（_check_size）"""
     # --- 官方格式 ---
     if re.search(r"\[Shot 1\] (?:At|From) \d", dd):
         E.append("[Shot 1] 不可帶時間戳（官方）")
@@ -164,7 +236,11 @@ def _common(p, dd, snd, music, frames, entry, E, W):
         head = dd.split("[Shot 1]", 1)[-1][:900].lower()
         missing = [k for k in entry if k.lower() not in head]
         if missing:
-            E.append(f"起手狀態沒接上上一鏡收尾（ENTRY）：缺 {missing}——起手 [Shot 1] 前 900 字內要寫到上一鏡結束時的位置／手上／視線")
+            msg = f"起手狀態沒接上上一鏡收尾（ENTRY）：缺 {missing}——起手 [Shot 1] 前 900 字內要寫到上一鏡結束時的位置／手上／視線"
+            if level is not None and level >= 3:
+                W.append(msg + "（中近景以內只寫看得見的，看不見的寫在連戲交接）")
+            else:
+                E.append(msg)
     for m in re.finditer(PROP_OVERHANDLING, dd, re.I):
         sent = dd[dd.rfind(".", 0, m.start()) + 1: dd.find(".", m.end()) + 1]
         if re.search(NO_CONTACT, sent, re.I):
@@ -237,13 +313,14 @@ def _lint_ref(p, n_refs=None, ref_names=(), frames=None, entry=None):
     first_line = dd.split("\n", 1)[0]
     if "[Shot 1]" in first_line:
         E.append("detailed_description 第一句要先寫全片風格，再進 [Shot 1]")
+    level = _check_size(sm, sd, ra, dd, E, W)
     # --- 驗證過的準則（❌）：參考模式才有的（定義句、場景圖、角色板）---
     for m in re.finditer(r"<Subject (\d+)> is (.+?)(?:\n|$)", sd):
         line = m.group(2)
         if re.search(PROP_WORDS, line, re.I) and not re.search(r"\b(woman|man|girl|boy|figure|interior|room|workshop|shop|bedroom|kitchen|hall|courtyard|street|house|alley|market|environment|set)\b", line, re.I):
             if not re.search(SURFACE_PHRASES, line, re.I) and not re.search(SURFACE_PHRASES, dd[:600], re.I):
                 E.append(f"道具 <Subject {m.group(1)}> 沒有檯面錨：要寫在哪個檯面／誰的手上")
-    for rn in ref_names:
+    for rn in ref_names if level is None or level < 3 else ():  # 中近景以內不列地標（規則核心 §7.5）
         sid = rn.split("-")[0].upper()
         for lm, pat in SCENE_LANDMARKS.get(sid, {}).items():
             if not re.search(pat, dd, re.I):
@@ -282,7 +359,7 @@ def _lint_ref(p, n_refs=None, ref_names=(), frames=None, entry=None):
             if m.group(1) not in KNOWN_NAMES:
                 E.append(f"角色名「{m.group(1)}」不在白名單 {sorted(KNOWN_NAMES)}——名字只能用登記過的")
     snd, music = sec.get("overall_soundscape", ""), sec.get("non_diegetic_music", "")
-    _common(p, dd, snd, music, frames, entry, E, W)
+    _common(p, dd, snd, music, frames, entry, E, W, level)
     _check_sentences(sm + "\n" + dd + "\n" + snd, E, W)
     return E, W
 
@@ -325,7 +402,8 @@ def _lint_base(p, mode, n_refs=None, frames=None, entry=None):
         E.append("基礎模式不能用 <Subject N>／<Audio N>／<Video N>（那是參考模式的寫法）")
     if not dd.startswith("[Shot 1]"):
         E.append("integrated_multimodal_description 要以 [Shot 1] 開頭（官方）")
-    _common(p, dd, snd, music, frames, entry, E, W)
+    level = _check_size("", "", "", dd, E, W)
+    _common(p, dd, snd, music, frames, entry, E, W, level)
     _check_sentences(dd + "\n" + snd, E, W)
     return E, W
 

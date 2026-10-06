@@ -61,7 +61,7 @@ LOG = os.path.join(PROJ, "_腳本", "生成紀錄.jsonl")
 PROFILES = {
     "formal": {"w": 768, "h": 1344, "pdd": 8, "ref_image_size": "match"},
     "base20": {"w": 768, "h": 1344, "steps": 20, "scheduler": "beta", "ref_image_size": "match"},
-    "draft":  {"w": 416, "h": 736, "pdd": 8, "ref_image_size": "max"},
+    "draft":  {"w": 416, "h": 736, "pdd": 8, "ref_image_size": "match"},
 }
 
 
@@ -211,7 +211,7 @@ def qwen_edit(prompt, image_names, seed, prefix, size=None, resolution=0, steps=
 def h3_ref(prompt, image_names, audio_names, seed, prefix, frames=158, w=768, h=1344, steps=20, end_frame=None,
            guide0=False, guides=(), scheduler="beta", ref_image_size="match", pdd=None):
     """image_names 依序接 ref_image_0..（首幀一定是第一張＝<Picture 1>）；audio_names 依序接 ref_audio_0..（<Audio 1>…）
-    guide0：True＝把第一張（首幀）用 MiniMaxH3AddGuide 釘在第 0 幀。參考圖本身不在時間軸上，不釘的話第 0 幀只是像首幀；有首幀就釘
+    guide0：True＝把第一張（首幀）用 MiniMaxH3AddGuide 釘在第 0 幀。參考圖本身不在時間軸上，不釘的話第 0 幀只是像首幀；有首幀就釘。釘是軟約束：首幀和提示詞的景別、內容衝突時會被蓋掉（第 0 幀差 50 以上）
     end_frame：尾幀圖名，接在最後一個 ref_image，再釘在最後一格（frame_idx −1）。首尾都釘靜止畫面，片子幾乎不會動
     guides：[(圖名, frame_idx)] 片中關鍵幀；圖名必須也在 image_names 裡，文字才有 <Picture N> 可以指（官方多幀範本的接法）
     pdd：4／6／8＝PDD 加速步數（SigmaShift 12／3、euler、用加速節點給的 sigmas）；None＝基礎模型照 steps、scheduler 跑"""
