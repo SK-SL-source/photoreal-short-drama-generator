@@ -547,6 +547,46 @@ def _segments(cards, shot):
     return parse_generation(gen.group(1))
 
 
+def dialogue_lines(cell):
+    """鎖定鏡頭表「台詞(逐字)」那一格拆成一句一句：換行或「｜」分句，去掉開頭的「角色名：」；沒台詞回傳 []"""
+    out = []
+    for piece in re.split(r"[\n｜|]", cell or ""):
+        piece = re.sub(r"^[^：:]{1,12}[：:]\s*", "", piece.strip())
+        if piece:
+            out.append(piece)
+    return out
+
+
+def _norm_line(s):
+    """比對台詞前正規化：去掉內嵌標籤和 [Chinese] 這種語言標、去掉空白，半形 ,.?! 當全形"""
+    s = re.sub(r"<[^>]+>", "", s)
+    s = re.sub(r"^\s*\[[A-Za-z\- ]+\]\s*", "", s)
+    return re.sub(r"\s+", "", s).translate(str.maketrans(",.?!", "，。？！"))
+
+
+def prompt_dialogue(text):
+    """提示詞裡每個 <d>…</d> 的台詞（正規化後，照出現順序）"""
+    return [_norm_line(m) for m in re.findall(r"<d>(.*?)</d>", text, re.S)]
+
+
+def _match_dialogue(plan, prompt, seg):
+    """提示詞的台詞照鎖定的鏡頭表（4-生成與驗片.md §1）：每句 <d> 都要是這一鏡「台詞(逐字)」裡的一句、一字不差；
+    鏡頭表沒台詞的鏡不能有 <d>；不拆段的鏡每句都要在（拆段的鏡台詞可能分在 A、B 段，只查有的句子對不對）"""
+    want = [_norm_line(l) for l in plan["lines"]]
+    got = prompt_dialogue(prompt)
+    if not want and got:
+        return [("DIALOGUE_UNPLANNED", f"鎖定的鏡頭表 {plan['shot']} 沒有台詞，提示詞卻有 {len(got)} 句 <d>：台詞只有使用者能加")]
+    fails = []
+    for g in got:
+        if g not in want:
+            fails.append(("DIALOGUE_MISMATCH", f"提示詞的台詞「{g[:40]}」不在鎖定鏡頭表 {plan['shot']} 的台詞（{'／'.join(plan['lines'])}）裡：台詞照定稿一字不改"))
+    if not fails and "B" not in plan["segments"] and not seg:
+        missing = [l for l, w in zip(plan["lines"], want) if w not in got]
+        if missing:
+            fails.append(("DIALOGUE_MISSING", f"鎖定鏡頭表 {plan['shot']} 的台詞「{'／'.join(missing)}」沒寫進提示詞：少一句也是改了故事"))
+    return fails
+
+
 def _ledger_job(root, job_id):
     """佇列帳本裡的一條（_腳本/佇列/編號.json）；沒有就 None"""
     path = os.path.join(root, "_腳本", "佇列", f"{job_id}.json")
@@ -595,6 +635,7 @@ def shot_plan(root, shot):
         return None, [("PLAN_UNREADABLE", e) for e in errors]
     visual, vids, _ = split_materials(card_materials(cards[shot]) or [], assets, {v["id"] for v in voices})
     return {"shot": shot, "strategy": strategy, "source": (src_shot, src_seg, src_frame),
+            "lines": dialogue_lines(row.get("台詞(逐字)") or row.get("台詞") or ""),
             "first_file": canon_path(root, board["首幀檔"]) if board.get("首幀檔") else None,
             "segments": segs, "assets": [(a, assets[a]["file"]) for a in visual], "asset_status": {a: assets[a]["status"] for a in visual},
             "approved_assets": {sha: a for a, x in assets.items() if x["status"] == "核可" for sha in [_sha_if_file(root, x["file"])] if sha},
@@ -758,6 +799,7 @@ def validate_shot_preflight(facts, meta, stage, root=comfy.PROJ, input_dir=comfy
         fails += errors
         if plan:
             fails += _match_plan(root, plan, facts, seg, input_dir, after, _ledger_job(root, after[0]) if after else None)
+            fails += _match_dialogue(plan, facts["prompt"], seg)
     res = _result(fails, graph=facts["key"], exception=exc_id, stage=stage)
     if res["ok"] and stage == "dispatch" and job:
         res["permit"] = comfy._issue_permit(job, facts["key"])
