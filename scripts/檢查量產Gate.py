@@ -539,12 +539,46 @@ def parse_first_source(src):
     return None
 
 
+GEN_LINE = re.compile(r"^生成[：:](.*(?:\n(?:\s|[AB]\s*段|成片取).*)*)", re.M)
+RANGE = r"(\d+(?:\.\d+)?)\s*[–\-~～—]\s*(\d+(?:\.\d+)?)\s*秒"
+
+
+def card_generation(card):
+    """分鏡卡「生成：」那一行（含接下來以空白、A 段／B 段、成片取開頭的續行）；沒有回傳 None"""
+    m = GEN_LINE.search(card or "")
+    return m.group(1) if m else None
+
+
+def parse_take(text):
+    """「生成」那一行裡的成片取（2-分鏡.md §4、§5）：不拆段寫 成片取 0.5–5.5 秒 → {"": (0.5, 5.5)}；
+    拆段寫 成片取 A 0–4 秒＋B 0–1.5 秒 → {"A": (0, 4), "B": (0, 1.5)}。回傳（{段: (起, 迄)}, 錯誤）"""
+    if "成片取" not in (text or ""):
+        return {}, ["「生成」那一行沒寫成片取（例：成片取 0.5–5.5 秒；拆段：成片取 A 0–4 秒＋B 0–1.5 秒）"]
+    out, errors = {}, []
+    for m in re.finditer(r"(?:([AB])\s*段?\s*)?" + RANGE, text.split("成片取", 1)[1]):
+        seg, a, b = m.group(1) or "", float(m.group(2)), float(m.group(3))
+        if seg in out:
+            errors.append(f"成片取的 {seg or '不拆段'} 寫了兩次")
+        if b <= a:
+            errors.append(f"成片取 {a:g}–{b:g} 秒：迄秒要大於起秒")
+        out[seg] = (a, b)
+    if not out:
+        errors.append("成片取讀不出秒數（寫成 a–b 秒）")
+    return out, errors
+
+
+def parse_dialogue_window(card):
+    """分鏡卡裡機器讀的台詞窗（動作卡 J）：台詞窗 0.5–3.5 秒；拆段的鏡寫 台詞窗 B 0.3–1.3 秒。回傳 {段: (起, 迄)}；沒寫就空"""
+    return {(m.group(1) or ""): (float(m.group(2)), float(m.group(3)))
+            for m in re.finditer(r"台詞窗\s*(?:([AB])\s*段?\s*)?" + RANGE, card or "")}
+
+
 def _segments(cards, shot):
     """這一鏡分鏡卡「生成」那一行解析出的段。回傳（{段: …}, 錯誤）"""
-    gen = re.search(r"^生成[：:](.*(?:\n(?:\s|[AB]\s*段|成片取).*)*)", cards.get(shot, ""), re.M)
+    gen = card_generation(cards.get(shot, ""))
     if gen is None:
         return {}, ["分鏡卡找不到「生成：」那一行"]
-    return parse_generation(gen.group(1))
+    return parse_generation(gen)
 
 
 def dialogue_lines(cell):

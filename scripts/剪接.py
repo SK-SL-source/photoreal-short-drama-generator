@@ -28,6 +28,7 @@ G5C Animatic 也用這支：分鏡參考圖照鏡頭表的秒數硬切接起來�
 """
 import csv, os, re, subprocess, sys
 from comfy import CFG, PROFILES, PROJ, need_file, read_json
+import 檢查量產Gate as gate   # 分鏡卡「成片取」「台詞窗」的解析，和鏡頭表檢查同一套
 sys.stdout.reconfigure(encoding="utf-8")
 FF = CFG["ffmpeg"]
 W, H = PROFILES["formal"]["w"], PROFILES["formal"]["h"]   # 靜態圖縮放到正式檔位的畫布
@@ -103,9 +104,18 @@ for i, (path, *_, n) in enumerate(clips):
             print(f"⚠️ {name}：{os.path.basename(p)} 從鏡內 {t:g} 秒放、長 {d:.2f} 秒，超過這一條 {t + d - n / FPS:.2f} 秒")
         overlays.append([p, starts[i] / FPS + t, g])
 # ---- 成片只收核可片（5-結案.md §5）：每條片段要有 label；鏡頭表那一鏡的狀態是「過（檔名、日期）」且含這個檔名；驗片包在；
-#      驗片包 cut 標「要看」的要有人工判定檔 片名_驗片.md。靜態圖（Animatic）不在此限。缺一條就 ❌ 不出片，--dry-run 也報
+#      驗片包 cut 標「要看」的要有人工判定檔 片名_驗片.md；取段照分鏡卡「成片取」，台詞窗不能被切到。
+#      靜態圖（Animatic）不在此限。缺一條就 ❌ 不出片，--dry-run 也報
 問題 = []
 if not all(stills):
+    TOL = 1 / FPS + 1e-6   # 一格
+    md_path = os.path.join(PROJ, "2-分鏡.md")
+    cards = {}
+    if os.path.isfile(md_path):
+        cards, _ = gate.find_cards(open(md_path, encoding="utf-8-sig").read().replace("\r\n", "\n"),
+                                   [re.sub(r"[AB]$", "", (c.get("label") or "").strip()) for c in cfg["clips"] if isinstance(c, dict) and c.get("label")])
+    else:
+        問題.append(f"❌ 找不到 {md_path}：取段要照分鏡卡的「成片取」核對")
     table = os.path.join(PROJ, "2-鏡頭表.csv")
     rows = {}
     if not os.path.isfile(table):
@@ -139,7 +149,28 @@ if not all(stills):
             note = os.path.join(os.path.dirname(path), f"{stem}_驗片.md")
             if "要看" in cut_line and not os.path.isfile(note):
                 問題.append(f"❌ {label}：驗片包說疑似切鏡或漏出參考圖、要看；人看過把判定寫進 {os.path.relpath(note, PROJ)} 才能進成片")
-        # TRIM_CHECK_ANCHOR
+        # 取段照分鏡卡「成片取」（5-結案.md §5）：起迄各差一格內；有交叉淡化時迄秒可以是成片取迄秒＋淡化秒（接點落在淡化中段）
+        card = cards.get(shot)
+        if card is None:
+            if os.path.isfile(md_path):
+                問題.append(f"❌ {label}：2-分鏡.md 找不到 {shot} 的分鏡卡")
+            continue
+        gen = gate.card_generation(card)
+        takes, errs = gate.parse_take(gen) if gen else ({}, ["分鏡卡沒有「生成：」那一行"])
+        if errs:
+            問題 += [f"❌ {label}：{x}" for x in errs]
+            continue
+        if seg not in takes:
+            問題.append(f"❌ {label}：分鏡卡成片取沒有{seg + ' 段' if seg else '不拆段'}（有：{'、'.join(k or '不拆段' for k in takes)}）")
+            continue
+        a, b = takes[seg]
+        xf = xfades[i] / FPS
+        if abs(s - a) > TOL or not (abs(e - b) <= TOL or (xf and abs(e - (b + xf)) <= TOL)):
+            問題.append(f"❌ {label}：取段 {s:g}–{e:g} 秒和分鏡卡成片取 {a:g}–{b:g} 秒不一樣"
+                      + (f"（有交叉淡化 {xf:g} 秒時迄秒可以寫到 {b + xf:g}）" if xf else "") + "；改剪接設定，要改取段就回第 2 站改卡")
+        for wseg, (wa, wb) in gate.parse_dialogue_window(card).items():
+            if wseg == seg and (wa < s - TOL or wb > e + TOL):
+                問題.append(f"❌ {label}：台詞窗 {wa:g}–{wb:g} 秒被取段 {s:g}–{e:g} 秒切到，台詞會被剪掉")
 if 問題:
     for p in 問題:
         print(p)
