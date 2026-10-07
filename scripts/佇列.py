@@ -1,13 +1,15 @@
 """佇列帳本：一次排很多條、不用等它跑完；用 prompt_id 追進度，完成就把輸出複製回專案、記進 生成紀錄.jsonl。
 接力：等前一條完成，先檢查它有沒有片中切鏡或漏出參考圖（驗片量測 cut），沒問題才取它的一格當這一條的首幀送出。
+H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出前各過一次送件前檢查（檢查量產Gate.py），排進來先記「待送出」，由 wait 送出；送出前那一次過了才拿到一次性通行證，comfy._post 只認它。
 帳本在 _腳本\\佇列\\，一條一個檔；程式中斷了，重跑 wait 就接著做。
 
 送件腳本裡：
     import comfy, 佇列
     g = comfy.h3_ref(…, guide0=True, **comfy.PROFILES["formal"])
-    佇列.add("S03_r1_s1001", g, ["4-影片/S03_r1_s1001.mp4"], meta={"鏡": "S03", "seed": 1001})
-    佇列.add("S04_r1_s1001", g4, ["4-影片/S04_r1_s1001.mp4"], after=("S03_r1_s1001", -1, "100"))
+    佇列.add("S03_r1_s1001", g, ["4-影片/S03_r1_s1001.mp4"], meta={"鏡": "S03", "提示詞": "3-提示詞/S03.txt", "seed": 1001})
+    佇列.add("S04_r1_s1001", g4, ["4-影片/S04_r1_s1001.mp4"], after=("S03_r1_s1001", -1, "100"), meta={"鏡": "S04", …})
         # after＝(前一條, 第幾格（−1＝最後一格）, 要換圖的 LoadImage 節點)
+        # H3 影片的 meta 要有「鏡」「提示詞」；拆段的鏡加「段」（A／B），用例外加「例外」（例：EXC-001）
 命令列：
     python 佇列.py                看狀態（不改帳本）
     python 佇列.py wait [秒]       每隔幾秒（預設 30）收完成的、送輪到的接力，沒有會自己往下走的才停；同一時間只開一個
@@ -16,11 +18,12 @@
 """
 import json, os, shutil, subprocess, sys, time, urllib.error, urllib.request
 import comfy
+import 檢查量產Gate as gate
 from 驗片量測 import cut_one
 
 sys.stdout.reconfigure(encoding="utf-8")
 DIR = os.path.join(comfy.PROJ, "_腳本", "佇列")
-WAIT, HOLD, QUEUED, DONE, FAILED, CANCELLED = "等前一條", "等你看", "已送出", "完成", "失敗", "取消"
+WAIT, HOLD, READY, QUEUED, DONE, FAILED, CANCELLED, BLOCKED = "等前一條", "等你看", "待送出", "已送出", "完成", "失敗", "取消", "關卡擋下"
 
 
 def _file(job_id):
@@ -50,12 +53,20 @@ def _say(job):
 
 
 def _submit(job):
+    facts, pre = comfy.h3_video_facts(job["graph"]), None
+    if facts:   # H3 影片：真的送出前再過一次送件前檢查（排進來之後關卡可能已經失效）
+        pre = gate.validate_shot_preflight(facts, job["meta"], "dispatch", relay_node=(job["after"] or [None] * 3)[2],
+                                           relay_frame=job.get("relay_frame"), job=job["id"])
+        if not pre["ok"]:
+            job.update(state=BLOCKED, error=pre["message"], gate=pre["reasons"])
+            return
     problems = comfy.check_graph(job["graph"])
     if problems:
         job.update(state=FAILED, error="節點圖有問題：" + "；".join(problems[:3]))
         return
     try:
-        resp = json.loads(comfy._post("/prompt", {"prompt": job["graph"], "client_id": "short-drama", "front": job["front"]}))
+        resp = json.loads(comfy._post("/prompt", {"prompt": job["graph"], "client_id": "short-drama", "front": job["front"]},
+                                      permit=pre["permit"] if pre else None, job=job["id"]))
     except urllib.error.HTTPError as e:
         job.update(state=FAILED, error=f"送件 HTTP {e.code}：{e.read().decode('utf-8', 'replace')[:800]}")
         return
@@ -67,14 +78,22 @@ def _submit(job):
 
 def add(job_id, graph, dests, after=None, front=False, meta=None):
     """排一條。dests：輸出依序複製到專案裡的這些路徑（相對專案資料夾）。
-    after＝(前一條編號, 第幾格, LoadImage 節點編號)：等前一條完成、檢查過，再取那一格換進這個節點送出。"""
-    assert not os.path.exists(_file(job_id)), f"{job_id} 已經在帳本裡"
-    if after:
-        assert after[1] == -1 or after[1] >= 0, "接力只能取最後一格（−1）或從頭數的第幾格"
-        assert graph[after[2]]["class_type"] == "LoadImage", f"節點 {after[2]} 不是 LoadImage"
+    after＝(前一條編號, 第幾格, LoadImage 節點編號)：等前一條完成、檢查過，再取那一格換進這個節點送出。
+    H3 影片先過送件前檢查，沒過就丟 comfy.GateBlocked、不進帳本；過了記「待送出」，wait 送出前再檢查一次。其他的圖照舊直接送。"""
+    if os.path.exists(_file(job_id)):
+        raise ValueError(f"{job_id} 已經在帳本裡")
+    if after and not (after[1] == -1 or after[1] >= 0):
+        raise ValueError("接力只能取最後一格（−1）或從頭數的第幾格")
+    if after and graph[after[2]]["class_type"] != "LoadImage":
+        raise ValueError(f"節點 {after[2]} 不是 LoadImage")
+    facts = comfy.h3_video_facts(graph)
+    if facts:
+        pre = gate.validate_shot_preflight(facts, meta or {}, "add", relay_node=after[2] if after else None)
+        if not pre["ok"]:
+            raise comfy.GateBlocked(pre)
     job = {"id": job_id, "graph": graph, "dests": list(dests), "after": list(after) if after else None, "front": front,
-           "meta": meta or {}, "state": WAIT, "added": time.time()}
-    if not after:
+           "meta": meta or {}, "state": READY if facts and not after else WAIT, "added": time.time()}
+    if not after and not facts:
         _submit(job)
     _save(job)
     _say(job)
@@ -142,10 +161,15 @@ def advance():
         _save(j)
         _say(j)
     for j in js.values():
+        if j["state"] == READY:
+            _submit(j)
+            _save(j)
+            _say(j)
+    for j in js.values():
         if j["state"] != WAIT:
             continue
         src = js.get(j["after"][0])
-        if src is None or src["state"] in (FAILED, CANCELLED):
+        if src is None or src["state"] in (FAILED, CANCELLED, BLOCKED):
             j.update(state=FAILED, error=f"前一條 {j['after'][0]} 沒有完成，這條沒送")
         elif src["state"] == DONE:
             _relay(j, src)
@@ -161,8 +185,8 @@ def _moving(js):
     def alive(j):
         while j and j["state"] == WAIT:
             j = js.get(j["after"][0])
-        return bool(j) and j["state"] == QUEUED
-    return sum(alive(j) for j in js.values() if j["state"] in (WAIT, QUEUED))
+        return bool(j) and j["state"] in (READY, QUEUED)
+    return sum(alive(j) for j in js.values() if j["state"] in (WAIT, READY, QUEUED))
 
 
 def status():
@@ -183,6 +207,8 @@ def status():
             note = "正在跑" if pid in running else (f"排第 {pending.index(pid) + 1}" if pid in pending else "跑完了，等 wait 收")
         elif j["state"] == WAIT:
             note = f"等 {j['after'][0]}"
+        elif j["state"] == READY:
+            note = "等 wait 送出"
         elif j["state"] == DONE:
             note = f"{j.get('sec', '?')} 秒 → {os.path.relpath(j['files'][0], comfy.PROJ)}"
         else:
@@ -209,13 +235,17 @@ def wait(interval=30):
     held = [j["id"] for j in js.values() if j["state"] == HOLD]
     if held:
         print("等你看：" + "、".join(held) + "（前一條看過沒問題，用 release 放行）")
-    return 1 if any(j["state"] == FAILED for j in js.values()) else 0
+    blocked = [j["id"] for j in js.values() if j["state"] == BLOCKED]
+    if blocked:
+        print("關卡擋下：" + "、".join(blocked) + "（原因見上面；不會再送，問題解決後用新的編號重排）")
+    return 1 if any(j["state"] in (FAILED, BLOCKED) for j in js.values()) else 0
 
 
 def release(ids):
     for jid in ids:
         j = _load(jid)
-        assert j["state"] == HOLD, f"{jid} 是「{j['state']}」，不是等你看"
+        if j["state"] != HOLD:
+            raise ValueError(f"{jid} 是「{j['state']}」，不是等你看")
         _relay(j, _load(j["after"][0]), check=False)
         _save(j)
         _say(j)
@@ -231,7 +261,7 @@ def cancel(ids):
                 comfy._post("/interrupt", {"prompt_id": j["prompt_id"]})
             else:
                 comfy._post("/queue", {"delete": [j["prompt_id"]]})
-        if j["state"] in (WAIT, HOLD, QUEUED):
+        if j["state"] in (WAIT, HOLD, READY, QUEUED):
             j["state"] = CANCELLED
             _save(j)
         _say(j)

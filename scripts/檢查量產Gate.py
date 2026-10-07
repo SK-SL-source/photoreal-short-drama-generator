@@ -1,0 +1,740 @@
+"""量產關卡（G5D）：Final Shot Lock 的前置檢查和指紋、整部片的關卡、H3 影片的送件前檢查和一次性通行證、例外。
+規格：references/2-分鏡.md §12、references/4-生成與驗片.md §1。佇列.py 排進佇列和真的送出前都會呼叫這裡；這支只照規格實作，不自己訂規則。
+命令列（在專案資料夾；不在就加 --project 專案資料夾）：
+    python _腳本/檢查量產Gate.py check              關卡過不過；沒過是哪一項；例外各用掉幾條
+    python _腳本/檢查量產Gate.py fingerprint        印出現在的三個指紋（不寫檔）
+    python _腳本/檢查量產Gate.py ready --animatic 2-預覽/animatic_v03.mp4 --manifest 2-預覽/animatic_v03.json
+        鎖定前先跑：前置都齊了沒（不寫檔），給使用者看鎖定卡之前用
+    python _腳本/檢查量產Gate.py lock --animatic 2-預覽/animatic_v03.mp4 --manifest 2-預覽/animatic_v03.json --user-approved
+        使用者說了「鎖定」才跑：前置沒齊就不鎖；齊了才算指紋、寫 量產關卡.json（state＝LOCKED）。程式不會因為檔案齊全就自己鎖
+    python _腳本/檢查量產Gate.py invalidate --reason "S03 改台詞"
+        使用者要改鎖定的內容：state 改成 INVALID。沒有反過來的命令，要重新鎖定就重跑 lock
+    python _腳本/檢查量產Gate.py exception --shots S01 --profiles draft --takes 3 --reason "S01 景別測試" --user "使用者的原話和日期"
+        記一條例外，編號自動給（EXC-001…）
+"""
+import argparse, csv, datetime, hashlib, io, json, os, re, sys
+import comfy
+import h3_prompt_lint
+
+GATE_FILE = "量產關卡.json"
+SCHEMA_VERSION = 1
+RUNTIME_COLUMNS = ("狀態", "重做次數", "備註")   # 執行中的欄位：照欄名排除，不看位置
+DERIVED_COLUMNS = ("參考圖",)                    # 鏡頭表「參考圖」是分鏡卡「素材」的鏡像：不算指紋，鎖定前要和素材一致
+HASHES = {"shot_table_hash": ("HASH_SHOT_TABLE", "鏡頭表"),
+          "production_plan_hash": ("HASH_PRODUCTION_PLAN", "製作計畫（劇本、分鏡卡、風格句、美術段、資產、音色、分鏡參考圖）"),
+          "animatic_manifest_hash": ("HASH_ANIMATIC", "核可的 Animatic 時間軸和它用到的檔")}
+STRATEGIES = (("接力", "relay"), ("借", "borrow"), ("合成", "composite"), ("無", "none"))
+GATE_RECORD = (("G3A", "LOCKED"), ("G4C", "PASS"), ("G5C", "PASS"))   # 鎖定前，關卡紀錄表要這樣寫
+SPLIT = r"[、,，;；\s]+"
+
+
+# ---------- 正規化 ----------
+
+def _text(path):
+    """UTF-8 讀進來；檔頭 BOM 不算，換行一律 \\n"""
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return f.read().replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _canon_text(s):
+    """行尾空白、前後空行不算"""
+    return "\n".join(line.rstrip() for line in s.split("\n")).strip("\n")
+
+
+def _digest(obj):
+    data = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _numbers(x):
+    """數字一律當小數比：3 和 3.0 是同一個值"""
+    if isinstance(x, bool) or not isinstance(x, (int, float, list, dict)):
+        return x
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, list):
+        return [_numbers(v) for v in x]
+    return {k: _numbers(v) for k, v in x.items()}
+
+
+def file_sha(path):
+    """檔案原始內容的 SHA-256（每次都重算：同一個時鐘刻度裡改過、大小又一樣的檔，靠修改時間分不出來）"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return "sha256:" + h.hexdigest()
+
+
+def canon_path(root, p):
+    """路徑一律寫成相對專案資料夾、用 / 分隔：2-分鏡圖\\S01.png 和 2-分鏡圖/S01.png 是同一個檔"""
+    p = p.strip().strip("`").replace("\\", "/")
+    full = os.path.normpath(p if os.path.isabs(p) else os.path.join(root, p))
+    try:
+        rel = os.path.relpath(full, root)
+    except ValueError:   # 不同磁碟
+        rel = full
+    return (full if rel.startswith("..") else rel).replace("\\", "/")
+
+
+def _abs(root, p):
+    return p if os.path.isabs(p) else os.path.join(root, p)
+
+
+def _sha_if_file(root, p):
+    return file_sha(_abs(root, p)) if os.path.isfile(_abs(root, p)) else None
+
+
+def _result(fails, **extra):
+    """fails：[(機器讀的代碼, 給人看的說明)]"""
+    return {"ok": not fails, "reasons": [c for c, _ in fails], "messages": [m for _, m in fails],
+            "message": "；".join(m for _, m in fails) or "通過", **extra}
+
+
+# ---------- 讀來源 ----------
+
+def load_gate(root):
+    """量產關卡.json；沒有就回傳 None，寫壞了就丟 ValueError"""
+    path = os.path.join(root, GATE_FILE)
+    return json.loads(_text(path)) if os.path.exists(path) else None
+
+
+def read_shot_table(root):
+    """鏡頭表照欄名讀，一列一鏡、保留原本的順序；儲存格前後空白不算"""
+    rows = csv.DictReader(io.StringIO(_text(os.path.join(root, "2-鏡頭表.csv"))))
+    return [{k.strip(): (v or "").strip() for k, v in r.items() if k is not None} for r in rows]
+
+
+def md_tables(md):
+    """Markdown 表格：[(表頭, [一列一個 dict])]"""
+    tables, head, rows = [], None, []
+    for line in md.split("\n") + [""]:
+        if line.lstrip().startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if head is None:
+                head = cells
+            elif not all(re.fullmatch(r":?-{3,}:?", c) for c in cells):
+                rows.append(dict(zip(head, cells)))
+        elif head is not None:
+            tables.append((head, rows))
+            head, rows = None, []
+    return tables
+
+
+def _table(md, *need):
+    """表頭有 need 這幾欄的第一張表"""
+    return next((rows for head, rows in md_tables(md) if all(n in head for n in need)), None)
+
+
+def find_cards(md, shot_ids):
+    """每一鏡的分鏡卡：從「鏡號｜」開頭的那一行起，到下一張卡、下一個標題或 ``` 為止。回傳（{鏡號: 全文}, 出現兩次以上的鏡號）"""
+    ids = [s for s in shot_ids if s]
+    if not ids:
+        return {}, []
+    start = re.compile(r"^#*\s*(" + "|".join(map(re.escape, sorted(ids, key=len, reverse=True))) + r")\s*[｜|]")
+    lines = md.split("\n")
+    cards, dup = {}, []
+    for i, line in enumerate(lines):
+        m = start.match(line)
+        if not m:
+            continue
+        j = i + 1
+        while j < len(lines) and not (lines[j].startswith(("#", "```")) or start.match(lines[j])):
+            j += 1
+        if m.group(1) in cards:
+            dup.append(m.group(1))
+        cards[m.group(1)] = _canon_text("\n".join(lines[i:j]))
+    return cards, dup
+
+
+def style_parts(md):
+    """視覺聖經「風格句」那一列，和「美術段」整段（**美術段 那一行到下一個標題）"""
+    row = re.search(r"^\|\s*風格句\s*\|.*$", md, re.M)
+    art = re.search(r"^\*\*美術段.*?(?=^#|\Z)", md, re.M | re.S)
+    style = "|".join(c.strip() for c in row.group(0).strip().strip("|").split("|")) if row else None
+    return style, (_canon_text(art.group(0)) if art else None)
+
+
+def asset_table(root, md):
+    """資產表（表頭有「ID」「檔案」）：{ID: {"file": 相對路徑, "status": 狀態}}。找不到表、ID 重複都算錯。
+    「用在」只是反查用的索引，製作依賴以分鏡卡的「素材」為準"""
+    rows = _table(md, "ID", "檔案")
+    if rows is None:
+        return {}, ["找不到資產表（表頭要有「ID」「檔案」兩欄）"]
+    ids = [r["ID"] for r in rows]
+    return ({r["ID"]: {"file": canon_path(root, r["檔案"]), "status": r.get("狀態")} for r in rows},
+            [f"資產表 ID 重複：{i}" for i in sorted({i for i in ids if ids.count(i) > 1})])
+
+
+def voice_table(root, md):
+    """音色資產表（表頭有「Voice ID」「核可檔」）。使用鏡頭的寫法：S05＝在 H3 片段裡出聲（對白、畫外人聲）；
+    S05（心聲）、S05（旁白）＝只在後製和 Animatic 用，不掛 H3；同一鏡又說話又有心聲寫 S05、S05（心聲）。
+    加註要和「核可用途」一致；其他加註、範圍寫法都算錯。回傳（[{id, file, sha, status, uses, row}], 錯誤）；沒有出聲的身份＝空表"""
+    rows = _table(md, "Voice ID", "核可檔") or []
+    ids = [r["Voice ID"] for r in rows]
+    errors = [f"音色資產表 Voice ID 重複：{i}" for i in sorted({i for i in ids if ids.count(i) > 1})]
+    has_purpose = not rows or "核可用途" in rows[0]
+    if not has_purpose:
+        errors.append("音色資產表要有「核可用途」欄")
+    out = []
+    for r in rows:
+        vid, purpose, uses = r["Voice ID"], r.get("核可用途", ""), []
+        for t in [t for t in re.split(SPLIT, r.get("使用鏡頭", "")) if t]:
+            m = re.fullmatch(r"([^（()）]+)(?:[（(]([^）)]*)[）)])?", t)
+            if not m or re.search(r"[–~〜～]|到|\w-\w", m.group(1)):
+                errors.append(f"音色 {vid} 的使用鏡頭看不懂：{t}（逐一列鏡號，例：S05、S05（心聲））")
+                continue
+            note = m.group(2)
+            if note not in (None, "心聲", "旁白"):
+                errors.append(f"音色 {vid} 的使用鏡頭加註只能是心聲或旁白：{t}")
+                continue
+            if has_purpose and not (note in purpose if note else re.search(r"對白|畫外", purpose)):
+                errors.append(f"音色 {vid} 的使用鏡頭 {t} 和核可用途「{purpose}」不一致")
+            uses.append((m.group(1), note or "出聲"))
+        f = canon_path(root, r["核可檔"])
+        out.append({"id": vid, "file": f, "sha": _sha_if_file(root, f), "status": r.get("狀態"), "uses": uses,
+                    "row": {k: x for k, x in r.items() if k not in RUNTIME_COLUMNS}})
+    return out, errors
+
+
+def card_materials(card):
+    """分鏡卡「素材」那一行照接入順序拆開：首幀、尾幀、資產 ID、Voice ID。沒有這一行回傳 None"""
+    m = re.search(r"^素材[：:](.*)$", card, re.M)
+    return [t for t in re.split(SPLIT, m.group(1)) if t] if m else None
+
+
+def split_materials(items, assets, voice_ids):
+    """素材拆成：資產 ID（照順序＝參考圖的接入順序）、Voice ID（音色資產表的鏡像，照 <Audio N> 的順序）、看不懂的"""
+    visual, voices, unknown = [], [], []
+    for t in items:
+        if t.startswith(("首幀", "尾幀")):
+            continue
+        (visual if t in assets else voices if t in voice_ids else unknown).append(t)
+    return visual, voices, unknown
+
+
+def _board_rows(md):
+    return _table(md, "鏡號", "分鏡參考圖", "首幀資格")
+
+
+# ---------- 指紋 ----------
+
+def compute_shot_table_hash(rows):
+    """鏡頭表的指紋：每一列照順序，「狀態」「重做次數」「備註」和衍生的「參考圖」以外的欄（照欄名，欄的先後不算）"""
+    return _digest([{k: v for k, v in r.items() if k not in RUNTIME_COLUMNS + DERIVED_COLUMNS} for r in rows])
+
+
+def compute_production_plan_hash(root, rows):
+    """製作計畫的指紋：劇本（1-劇本.md 全文）、要進製作的每一鏡的分鏡卡全文、風格句那一列、美術段、這些鏡在「素材」引用到的資產
+    （照資產表的 ID 找檔案、算內容，同一份只算一次）、使用鏡頭和這些鏡有交集的音色列（核可檔算內容）、每鏡用哪一張分鏡參考圖和首幀資格。
+    沒被引用的資產、沒被使用的音色、敘事帳、關卡紀錄、首幀檔、各表的狀態欄不算。回傳（指紋或 None, 錯誤）"""
+    md = _text(os.path.join(root, "2-分鏡.md"))
+    story = _canon_text(_text(os.path.join(root, "1-劇本.md")))
+    ids = [r.get("鏡號", "") for r in rows]
+    errors = [f"鏡頭表的鏡號重複或空白：{s or '（空白）'}" for s in sorted({s for s in ids if not s or ids.count(s) > 1})]
+    cards, dup = find_cards(md, ids)
+    errors += [f"{s} 有兩張以上的分鏡卡，鎖定前只能留一張" for s in sorted(set(dup))]
+    errors += [f"找不到 {s} 的分鏡卡（要有一行以「{s}｜」開頭）" for s in ids if s and s not in cards]
+    style, art = style_parts(md)
+    if style is None:
+        errors.append("視覺聖經找不到「風格句」那一列")
+    if art is None:
+        errors.append("找不到美術段（以 **美術段 開頭的一段）")
+    assets, e1 = asset_table(root, md)
+    voices, e2 = voice_table(root, md)
+    errors += e1 + e2
+    boards = _board_rows(md)
+    if boards is None:
+        errors.append("找不到分鏡參考圖表（表頭要有「鏡號」「分鏡參考圖」「首幀資格」）")
+    used = set()
+    for s in ids:
+        items = card_materials(cards[s]) if s in cards else []
+        if items is None:
+            errors.append(f"{s} 的分鏡卡沒有「素材：」那一行")
+            continue
+        visual, _, unknown = split_materials(items, assets, {v["id"] for v in voices})
+        used |= set(visual)
+        errors += [f"{s} 的素材引用不存在的資產 ID：{t}" for t in unknown]
+    content = {}
+    for a in sorted(used):
+        sha = _sha_if_file(root, assets[a]["file"])
+        content[a] = {"檔案": assets[a]["file"], "內容": sha}
+        if sha is None:
+            errors.append(f"資產 {a} 的檔不見了：{assets[a]['file']}")
+    voice_part = []
+    for v in sorted((v for v in voices if any(s in ids for s, _ in v["uses"])), key=lambda v: v["id"]):
+        voice_part.append({**v["row"], "核可檔": v["file"], "內容": v["sha"]})
+        if v["sha"] is None:
+            errors.append(f"音色 {v['id']} 的核可檔找不到：{v['file']}")
+    board_part = [{"鏡號": b["鏡號"], "分鏡參考圖": canon_path(root, b["分鏡參考圖"]), "首幀資格": b["首幀資格"]}
+                  for s in ids for b in boards or [] if b.get("鏡號") == s]
+    if errors:
+        return None, errors
+    return _digest({"劇本": story, "分鏡卡": [cards[s] for s in ids], "風格句": style, "美術段": art,
+                    "資產": content, "音色": voice_part, "分鏡參考圖": board_part}), []
+
+
+def compute_animatic_manifest_hash(root, manifest):
+    """核可的時間軸檔（剪接設定）解析後比，加上它引用的每個圖檔、聲音檔的內容；輸出檔名 out 不算。回傳（指紋或 None, 錯誤）"""
+    errors = []
+
+    def ref(p):
+        f = canon_path(root, p)
+        if not os.path.isfile(_abs(root, f)):
+            errors.append(f"Animatic 用到的檔不見了：{p}")
+            return {"檔": f}
+        return {"檔": f, "內容": file_sha(_abs(root, f))}
+
+    cfg = json.loads(_text(_abs(root, manifest)))
+    clips = []
+    for c in cfg.get("clips", []):
+        c = dict(zip(("file", "start", "end", "speed", "gain", "xfade"), c)) if isinstance(c, list) else dict(c)
+        for k in ("image", "file"):
+            if k in c:
+                c[k] = ref(c[k])
+        if c.get("bed") and c["bed"][0] != "roomtone":
+            c["bed"] = [ref(c["bed"][0])] + c["bed"][1:]
+        c["overlays"] = [[ref(o[0])] + o[1:] for o in c.get("overlays") or []]
+        clips.append(c)
+    top = {k: v for k, v in cfg.items() if k not in ("clips", "out") and v is not None}
+    top["overlays"] = [[ref(o[0])] + o[1:] for o in top.get("overlays") or []]
+    if top.get("music"):
+        top["music"] = ref(top["music"])
+    return (None if errors else _digest(_numbers({**top, "clips": clips}))), errors
+
+
+def fingerprints(root, manifest):
+    """現在的三個指紋。回傳（{名稱: 指紋或 None}, 錯誤）"""
+    fp, errors = dict.fromkeys(HASHES), []
+    try:
+        rows = read_shot_table(root)
+        fp["shot_table_hash"] = compute_shot_table_hash(rows)
+        fp["production_plan_hash"], e = compute_production_plan_hash(root, rows)
+        errors += e
+    except FileNotFoundError as e:
+        errors.append(f"找不到 {os.path.basename(e.filename)}")
+    try:
+        fp["animatic_manifest_hash"], e = compute_animatic_manifest_hash(root, manifest)
+        errors += e
+    except FileNotFoundError:
+        errors.append(f"找不到時間軸檔：{manifest}")
+    except ValueError as e:
+        errors.append(f"時間軸檔 {manifest} 讀不懂：{e}")
+    return fp, errors
+
+
+# ---------- 鎖定前置 ----------
+
+def validate_lock_prerequisites(root, animatic, manifest):
+    """Final Shot Lock 的前置（2-分鏡.md §12），全部從 2-分鏡.md 和鏡頭表讀，工單不當依據：
+    關卡紀錄表 G3A＝LOCKED、G4C＝PASS、G5C＝PASS 而且依據就是這次要鎖的 Animatic 和時間軸檔；
+    要進製作的鏡引用到的資產都核可、檔案在；用到的音色都核可、核可檔找得到；每鏡在分鏡參考圖表正好一列、參考圖核可、三項檢查都過；
+    衍生欄位和正本一致（鏡頭表「參考圖」＝素材的資產 ID、素材的 Voice ID＝音色資產表在這一鏡出聲的、§10 首幀策略＝鏡頭表首幀來源）；
+    三個指紋算得出來。回傳錯誤清單，有任何一項就不能鎖"""
+    animatic, manifest = canon_path(root, animatic), canon_path(root, manifest)
+    errors = [f"找不到{what}：{p}" for p, what in ((animatic, "核可的 Animatic"), (manifest, "它的時間軸檔"))
+              if not os.path.isfile(_abs(root, p))]
+    try:
+        md, rows = _text(os.path.join(root, "2-分鏡.md")), read_shot_table(root)
+    except FileNotFoundError as e:
+        return errors + [f"找不到 {os.path.basename(e.filename)}"]
+    record = _table(md, "關卡", "狀態")
+    if record is None:
+        errors.append("2-分鏡.md 找不到關卡紀錄表（表頭「關卡」「狀態」「依據」）")
+    gates = {m.group(0): r for r in record or [] for m in [re.match(r"G\d+[A-D]?", r.get("關卡", "").strip())] if m}
+    for gid, want in GATE_RECORD:
+        if (gates.get(gid) or {}).get("狀態") != want:
+            errors.append(f"關卡紀錄表的 {gid} 要是 {want}（現在是 {(gates.get(gid) or {}).get('狀態') or '沒寫'}）")
+    basis = {canon_path(root, t) for t in re.split(SPLIT, (gates.get("G5C") or {}).get("依據", "")) if t}
+    errors += [f"關卡紀錄表 G5C 的依據裡沒有這次要鎖的{what}：{p}" for p, what in ((animatic, " Animatic"), (manifest, "時間軸檔"))
+               if p not in basis]
+    ids = [r.get("鏡號", "") for r in rows]
+    cards, _ = find_cards(md, ids)
+    assets, e1 = asset_table(root, md)
+    voices, e2 = voice_table(root, md)
+    errors += e1 + e2
+    voice_ids = {v["id"] for v in voices}
+    boards = _board_rows(md) or []
+    for row in rows:
+        s = row.get("鏡號", "")
+        visual, vids, _ = split_materials(card_materials(cards.get(s, "")) or [], assets, voice_ids)
+        for a in visual:
+            if assets[a]["status"] != "核可":
+                errors.append(f"{s} 用的資產 {a} 狀態是「{assets[a]['status'] or '沒寫'}」，要是核可")
+        spoken = [v["id"] for v in voices if (s, "出聲") in v["uses"]]
+        if sorted(vids) != sorted(spoken):
+            errors.append(f"{s} 素材寫的 Voice ID（{'、'.join(vids) or '無'}）和音色資產表在這一鏡出聲的（{'、'.join(spoken) or '無'}）不一致")
+        if "參考圖" in row:
+            mirror = [t for t in re.split(SPLIT, row["參考圖"]) if t in assets]
+            if sorted(mirror) != sorted(visual):
+                errors.append(f"{s} 鏡頭表「參考圖」（{'、'.join(mirror) or '無'}）和分鏡卡素材（{'、'.join(visual) or '無'}）不一致，以素材為準")
+        mine = [b for b in boards if b.get("鏡號") == s]
+        if len(mine) != 1:
+            errors.append(f"分鏡參考圖表的 {s} 要正好一列（現在 {len(mine)} 列）")
+            continue
+        for col, want in (("參考圖狀態", "核可"), ("美術檢查", "過"), ("構圖檢查", "過"), ("敘事檢查", "過")):
+            if mine[0].get(col) != want:
+                errors.append(f"分鏡參考圖表 {s} 的{col}是「{mine[0].get(col) or '沒寫'}」，要是{want}")
+        if mine[0].get("首幀策略", row.get("首幀來源")) != row.get("首幀來源"):
+            errors.append(f"分鏡參考圖表 {s} 的首幀策略和鏡頭表「首幀來源」不一樣，以鏡頭表為準")
+    for v in voices:
+        if any(s in ids for s, _ in v["uses"]):
+            if v["status"] != "核可":
+                errors.append(f"音色 {v['id']} 狀態是「{v['status'] or '沒寫'}」，要是核可")
+    fp, e = fingerprints(root, manifest)
+    return errors + [x for x in e if x not in errors]
+
+
+# ---------- 關卡 ----------
+
+def validate_project_gate(root=comfy.PROJ):
+    """整部片的關卡：量產關卡.json 在、格式版本認得、state 是 LOCKED、核可的時間軸檔在、三個指紋都對得上現在的來源。
+    只檢查不寫檔：指紋對不上就沒過，說出是哪一個（改回鎖定時的內容就又對得上）；要讓鎖失效用 invalidate。"""
+    try:
+        g = load_gate(root)
+    except ValueError as e:
+        return _result([("GATE_UNREADABLE", f"{GATE_FILE} 讀不懂：{e}")])
+    if g is None:
+        return _result([("GATE_MISSING", f"沒有 {GATE_FILE}：還沒有 Final Shot Lock（G5D）")])
+    if g.get("schema_version") != SCHEMA_VERSION:
+        return _result([("GATE_SCHEMA", f"{GATE_FILE} 的 schema_version 是 {g.get('schema_version')}，這支只認 {SCHEMA_VERSION}")])
+    if g.get("state") != "LOCKED":
+        return _result([("GATE_NOT_LOCKED", f"{GATE_FILE} 的 state 是 {g.get('state')}，不是 LOCKED")])
+    manifest = g.get("approved_animatic_manifest") or ""
+    if not os.path.isfile(_abs(root, manifest)):
+        return _result([("GATE_MANIFEST_MISSING", f"核可的時間軸檔不見了：{manifest}")])
+    fp, errors = fingerprints(root, manifest)
+    fails = [("SOURCE_UNREADABLE", e) for e in errors]
+    fails += [(code, f"{name}和鎖定時不一樣") for k, (code, name) in HASHES.items() if fp[k] and fp[k] != g.get(k)]
+    return _result(fails)
+
+
+def used_takes(root, exc_id):
+    """例外用掉的條數＝真的送到 ComfyUI 的條數：佇列帳本和生成紀錄裡記著這個例外、而且有 prompt_id 的（排了又取消、還沒送出的不算）"""
+    sent = set()
+    qdir = os.path.join(root, "_腳本", "佇列")
+    for n in os.listdir(qdir) if os.path.isdir(qdir) else []:
+        if n.endswith(".json"):
+            j = json.loads(_text(os.path.join(qdir, n)))
+            if j.get("meta", {}).get("例外") == exc_id and j.get("prompt_id"):
+                sent.add(j["prompt_id"])
+    log = os.path.join(root, "_腳本", "生成紀錄.jsonl")
+    for line in _text(log).split("\n") if os.path.exists(log) else []:
+        if line.strip():
+            r = json.loads(line)
+            if r.get("例外") == exc_id and r.get("prompt_id"):
+                sent.add(r["prompt_id"])
+    return len(sent)
+
+
+def validate_exception(gate, exc_id, shot, profile, used):
+    """例外：鏡、檔位、剩下的條數全部符合才放行；範圍要列出鏡號，沒有整個專案關掉關卡這種例外"""
+    exc = next((e for e in (gate or {}).get("exceptions", []) if e.get("id") == exc_id), None)
+    if exc is None:
+        return _result([("EXC_NOT_FOUND", f"{GATE_FILE} 沒有例外 {exc_id}")])
+    scope = exc.get("scope") or {}
+    missing = [k for k in ("reason", "authorized_by_user", "timestamp") if not exc.get(k)]
+    missing += [f"scope.{k}" for k in ("shots", "profiles", "takes") if not scope.get(k)]
+    if missing:
+        return _result([("EXC_INCOMPLETE", f"例外 {exc_id} 缺 {'、'.join(missing)}")])
+    if any("*" in s or s.lower() in ("all", "全部") for s in scope["shots"]):
+        return _result([("EXC_SCOPE_TOO_WIDE", f"例外 {exc_id} 的 shots 要列出鏡號，不能是全部")])
+    fails = []
+    if shot not in scope["shots"]:
+        fails.append(("EXC_SHOT", f"例外 {exc_id} 只涵蓋 {'、'.join(scope['shots'])}，不含 {shot}"))
+    if profile not in scope["profiles"]:
+        fails.append(("EXC_PROFILE", f"例外 {exc_id} 只涵蓋檔位 {'、'.join(scope['profiles'])}，這條是 {profile}"))
+    if used >= int(scope["takes"]):
+        fails.append(("EXC_TAKES_USED_UP", f"例外 {exc_id} 的 {scope['takes']} 條已經送出 {used} 條"))
+    return _result(fails)
+
+
+def parse_generation(text):
+    """分鏡卡「生成」那一行：不拆段＝{"": {"mode", "frames"}}；拆段寫「A 段 …；B 段 …」，B 段沒寫模式就跟 A 段一樣，幀數兩段都要寫。
+    模式：Ref2VA／參考模式＝ref，I2VA／FL2VA＝i2v；幀數＝「N 幀」（「第 N 幀」不算）。回傳（{段: …}, 錯誤）"""
+    parts = re.split(r"(?:^|[；;\s])([AB])\s*段", text)
+    segs = {"": parts[0]} if len(parts) == 1 else {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+    out, errors = {}, []
+    for name, t in segs.items():
+        t = t.split("成片取")[0]
+        frames = re.search(r"(?<![第\d])(?<!第 )(\d+)\s*幀", t)
+        out[name] = {"mode": "i2v" if re.search(r"I2VA|FL2VA", t) else "ref" if re.search(r"Ref2VA|參考模式", t) else None,
+                     "frames": int(frames.group(1)) if frames else None}
+    if "B" in out and out["B"]["mode"] is None:
+        out["B"]["mode"] = out.get("A", {}).get("mode")
+    for name, s in out.items():
+        where = f"{name} 段" if name else "「生成」"
+        if s["mode"] is None:
+            errors.append(f"{where}讀不出模式（Ref2VA／參考模式／I2VA）")
+        if s["frames"] is None:
+            errors.append(f"{where}讀不出幀數（寫成「N 幀」）")
+    return out, errors
+
+
+def shot_plan(root, shot):
+    """鎖定的計畫裡這一鏡怎麼生成：首幀策略（鏡頭表「首幀來源」）、每一段的模式和幀數（分鏡卡「生成」）、
+    素材（資產 ID 和 Voice ID，照接入順序）。回傳（計畫或 None, [(代碼, 說明)]）"""
+    rows = read_shot_table(root)
+    row = next((r for r in rows if r.get("鏡號") == shot), None)
+    if row is None:
+        return None, [("SHOT_NOT_IN_PLAN", f"鎖定的鏡頭表裡沒有 {shot}")]
+    src = row.get("首幀來源")
+    strategy = next((v for k, v in STRATEGIES if (src or "").startswith(k)), None)
+    if strategy is None:
+        return None, [("PLAN_UNREADABLE", f"{shot} 的首幀來源「{src}」看不懂（接力／借／合成／無）")]
+    md = _text(os.path.join(root, "2-分鏡.md"))
+    cards, _ = find_cards(md, [r.get("鏡號", "") for r in rows])
+    gen = re.search(r"^生成[：:](.*(?:\n(?:\s|[AB]\s*段|成片取).*)*)", cards.get(shot, ""), re.M)
+    if gen is None:
+        return None, [("PLAN_UNREADABLE", f"{shot} 的分鏡卡找不到「生成：」那一行")]
+    segs, errors = parse_generation(gen.group(1))
+    if errors:
+        return None, [("PLAN_UNREADABLE", f"{shot} 的{e}") for e in errors]
+    assets, _ = asset_table(root, md)
+    voices, errors = voice_table(root, md)
+    if errors:
+        return None, [("PLAN_UNREADABLE", e) for e in errors]
+    visual, vids, _ = split_materials(card_materials(cards[shot]) or [], assets, {v["id"] for v in voices})
+    return {"shot": shot, "strategy": strategy, "segments": segs, "assets": [(a, assets[a]["file"]) for a in visual],
+            "approved_assets": {sha: a for a, x in assets.items() if x["status"] == "核可" for sha in [_sha_if_file(root, x["file"])] if sha},
+            "voices": vids, "need_voices": [v["id"] for v in voices if (shot, "出聲") in v["uses"]],
+            "voice_sha": {v["id"]: v["sha"] for v in voices},
+            "approved_voices": {v["sha"]: v["id"] for v in voices if v["sha"] and v["status"] == "核可"}}, []
+
+
+def _match_plan(root, plan, facts, seg, input_dir):
+    """節點圖和鎖定的計畫比：拆段、模式、幀數、首幀；參考圖照素材的資產 ID 和順序（釘幀的圖另算，不比）；音色照音色資產表"""
+    segs = plan["segments"]
+    if seg not in segs:
+        want = "、".join(f"{s} 段" for s in segs if s) or "不拆段"
+        return [("SPLIT_MISMATCH", f"鎖定的分鏡卡是{want}，這條寫的是{f'{seg} 段' if seg else '不拆段'}")]
+    s, fails = segs[seg], []
+    names = {"ref": "Ref2VA", "i2v": "I2VA"}
+    if s["mode"] != facts["mode"]:
+        fails.append(("MODE_MISMATCH", f"鎖定的是 {names[s['mode']]}，節點圖是 {names[facts['mode']]}"))
+    if s["frames"] != facts["frames"]:
+        fails.append(("FRAMES_MISMATCH", f"鎖定的是 {s['frames']} 幀，節點圖是 {facts['frames']} 幀"))
+    need_first = seg == "B" or plan["strategy"] != "none"
+    if need_first and facts["first_frame"] is None:
+        fails.append(("FIRST_FRAME_MISSING", "這一鏡要首幀（首幀策略或 B 段），節點圖沒有釘首幀"))
+    if not need_first and facts["first_frame"] is not None:
+        fails.append(("FIRST_FRAME_UNEXPECTED", "首幀策略是「無」，節點圖卻釘了首幀"))
+
+    def shas(refs):
+        """掛的檔的內容；不是直接讀檔的節點算空字串（對不上任何核可檔）；檔不在的 REF_MISSING 已經報過，不重複算"""
+        return [s for s in ("" if n is None else _sha_if_file(input_dir, n) for _, n in refs) if s is not None]
+
+    # 參考圖：素材的資產 ID 要全掛、不掛別的、照順序（<Picture N> 跟著這個順序）
+    want = [_sha_if_file(root, f) for _, f in plan["assets"]]
+    got, n0 = shas(facts["visual_refs"]), len(fails)
+    for sha in got:
+        if sha not in want:
+            a = plan["approved_assets"].get(sha)
+            fails.append(("ASSET_WRONG_ID", f"掛了 {a}，這一鏡素材沒有它") if a else ("ASSET_UNAPPROVED", "掛了資產表裡沒有、或還沒核可的圖"))
+    missing = [a for (a, _), sha in zip(plan["assets"], want) if sha not in got]
+    if missing:
+        fails.append(("ASSET_REQUIRED_MISSING", f"素材要掛 {'、'.join(missing)}，節點圖沒掛"))
+    if len(fails) == n0 and got != want:
+        fails.append(("ASSET_ORDER_MISMATCH", f"參考圖的接入順序和素材（{'、'.join(a for a, _ in plan['assets'])}）不一樣，<Picture N> 會對錯"))
+    # 音色：音色資產表在這一鏡出聲的都要掛、只能掛這些、照素材的 Voice ID 順序（<Audio N>）
+    got, n0 = shas(facts["audios"]), len(fails)
+    for sha in got:
+        vid = plan["approved_voices"].get(sha)
+        if vid is None:
+            fails.append(("VOICE_UNAPPROVED", "掛了音色資產表裡沒有、或還沒核可的音色檔"))
+        elif vid not in plan["need_voices"]:
+            fails.append(("VOICE_WRONG_ID", f"掛了 {vid}，這一鏡要的是 {'、'.join(plan['need_voices']) or '不掛音色'}"))
+    missing = [v + ("（核可檔不是檔案，比對不了）" if plan["voice_sha"].get(v) is None else "")
+               for v in plan["need_voices"] if plan["voice_sha"].get(v) not in got]
+    if missing:
+        fails.append(("VOICE_REQUIRED_MISSING", f"這一鏡要掛 {'、'.join(missing)}，節點圖沒掛"))
+    if len(fails) == n0 and got != [plan["voice_sha"].get(v) for v in plan["voices"]]:
+        fails.append(("VOICE_ORDER_MISMATCH", f"音色的接入順序和素材（{'、'.join(plan['voices'])}）不一樣，<Audio N> 會對錯"))
+    return fails
+
+
+def validate_shot_preflight(facts, meta, stage, root=comfy.PROJ, input_dir=comfy.INP, relay_node=None, relay_frame=None, job=None):
+    """H3 影片的送件前檢查（4-生成與驗片.md §1）。佇列在排進來（stage="add"）和真的送到 ComfyUI 前（stage="dispatch"）各跑一次。
+    facts＝comfy.h3_video_facts(節點圖)；meta＝送件時的 {"鏡", "提示詞", "段", "例外"}；
+    relay_node＝接力要換圖的 LoadImage 節點（after 的第三項），relay_frame＝接力取到的那一格（送出前才有）；job＝佇列條目編號。
+    送出前那一次（stage="dispatch"、有 job）過了，才發一次性的通行證 permit（綁專案、條目、節點圖），comfy._post 只認它。
+    回傳 {"ok", "reasons", "messages", "message", "graph", "exception", "stage"(, "permit")}：reasons 是機器讀的代碼，message 給人看。"""
+    fails = []
+    shot, seg, exc_id = meta.get("鏡"), meta.get("段") or "", meta.get("例外")
+    if not shot:
+        fails.append(("META_SHOT", "送件的 meta 要寫「鏡」（鏡號）"))
+    # 1. 整部片的關卡，或範圍內的例外
+    if exc_id:
+        try:
+            gate = load_gate(root)
+        except ValueError as e:
+            gate = None
+            fails.append(("GATE_UNREADABLE", f"{GATE_FILE} 讀不懂：{e}"))
+        r = validate_exception(gate, exc_id, shot, facts["profile"], used_takes(root, exc_id))
+    else:
+        r = validate_project_gate(root)
+    fails += list(zip(r["reasons"], r["messages"]))
+    # 2、3. 編譯好的提示詞在、和節點圖裡的一樣、lint 沒有 ❌
+    prompt = meta.get("提示詞")
+    path = _abs(root, canon_path(root, prompt)) if prompt else None
+    if not path or not os.path.isfile(path):
+        fails.append(("PROMPT_MISSING", f"找不到編譯好的提示詞：meta 的「提示詞」要指到 3-提示詞\\ 裡的檔（現在是 {prompt}）"))
+    else:
+        text = _text(path)
+        if _canon_text(text) != _canon_text(facts["prompt"].replace("\r\n", "\n")):
+            fails.append(("PROMPT_MISMATCH", f"節點圖裡的提示詞和 {prompt} 不一樣"))
+        errors, _ = h3_prompt_lint.lint(text, n_refs=facts["n_refs"], frames=facts["frames"])
+        if errors:
+            fails.append(("LINT_FAIL", f"{prompt} 的 lint 有 {len(errors)} 個 ❌：{errors[0]}"))
+    # 4. 要掛的圖和聲音都在 ComfyUI input（接力的那一格排進來時還沒取，送出前再看）
+    for node, name in facts["images"] + facts["audios"]:
+        if name and not (stage == "add" and node == relay_node) and not os.path.isfile(os.path.join(input_dir, name)):
+            fails.append(("REF_MISSING", f"ComfyUI input 裡沒有 {name}"))
+    # 7. 接力、借格：after 取到那一格（cut 檢查過或人 release）才送
+    if relay_node and stage == "dispatch" and not (relay_frame and os.path.isfile(relay_frame)):
+        fails.append(("RELAY_UNRESOLVED", "接力的那一格還沒取到"))
+    # 5、6、8–10. 照鎖定的計畫比（關卡過了才比；例外是計畫以外的測試，不比計畫）
+    if shot and not exc_id and r["ok"]:
+        plan, errors = shot_plan(root, shot)
+        fails += errors
+        if plan:
+            fails += _match_plan(root, plan, facts, seg, input_dir)
+    res = _result(fails, graph=facts["key"], exception=exc_id, stage=stage)
+    if res["ok"] and stage == "dispatch" and job:
+        res["permit"] = comfy._issue_permit(job, facts["key"])
+    return res
+
+
+# ---------- 寫關卡檔（只有命令列會呼叫）----------
+
+def _now():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _write(root, g):
+    path = os.path.join(root, GATE_FILE)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(g, f, ensure_ascii=False, indent=1)
+    os.replace(path + ".tmp", path)
+
+
+def lock(root, animatic, manifest, user_approved):
+    """Final Shot Lock：使用者說了「鎖定」之後才呼叫。前置沒齊就不鎖；齊了才算三個指紋寫進 量產關卡.json（state＝LOCKED），原有的例外留著。
+    回傳錯誤清單（空＝鎖好了）"""
+    if user_approved is not True:
+        return ["要使用者說了「鎖定」才能鎖（--user-approved）"]
+    errors = validate_lock_prerequisites(root, animatic, manifest)
+    if errors:
+        return errors
+    animatic, manifest = canon_path(root, animatic), canon_path(root, manifest)
+    fp, errors = fingerprints(root, manifest)
+    if errors:
+        return errors
+    old = load_gate(root) or {}
+    _write(root, {"schema_version": SCHEMA_VERSION, "state": "LOCKED", "locked_at": _now(), "approved_animatic": animatic,
+                  "approved_animatic_manifest": manifest, **fp, "exceptions": old.get("exceptions", [])})
+    return []
+
+
+def invalidate(root, reason):
+    """使用者要改鎖定的內容：state 改成 INVALID（只能單向）。回傳原本的 state"""
+    g = load_gate(root)
+    if g is None:
+        return None
+    old, g["state"] = g.get("state"), "INVALID"
+    _write(root, g)
+    print(f"{GATE_FILE}：state {old} → INVALID（{reason}）", file=sys.stderr)
+    return old
+
+
+def add_exception(root, shots, profiles, takes, reason, user):
+    """記一條例外，編號自動給。範圍要列出鏡號、檔位、條數；沒有鎖的專案也能記（state＝INVALID）。回傳例外；範圍不對丟 ValueError"""
+    known = list(comfy.PROFILES) + ["i2v"]
+    if not shots or any("*" in s or s.lower() in ("all", "全部") for s in shots):
+        raise ValueError("shots 要逐一列出鏡號，不能是全部")
+    if not profiles or any(p not in known for p in profiles):
+        raise ValueError(f"profiles 只能是 {'、'.join(known)}")
+    if not isinstance(takes, int) or takes < 1:
+        raise ValueError("takes 至少 1")
+    if not reason or not user:
+        raise ValueError("要寫原因（reason）和使用者授權的原話（user）")
+    g = load_gate(root) or {"schema_version": SCHEMA_VERSION, "state": "INVALID", "exceptions": []}
+    n = max([int(e["id"][4:]) for e in g.get("exceptions", []) if re.fullmatch(r"EXC-\d+", e.get("id", ""))] + [0]) + 1
+    exc = {"id": f"EXC-{n:03d}", "scope": {"shots": shots, "profiles": profiles, "takes": takes},
+           "reason": reason, "authorized_by_user": user, "timestamp": _now()}
+    g.setdefault("exceptions", []).append(exc)
+    _write(root, g)
+    return exc
+
+
+def main():
+    ap = argparse.ArgumentParser(description="量產關卡（G5D）")
+    ap.add_argument("--project", default=comfy.PROJ, help="專案資料夾（預設＝_腳本 的上一層）")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("check")
+    sub.add_parser("fingerprint").add_argument("--manifest", help="還沒鎖時，指定要算的時間軸檔")
+    for name in ("ready", "lock"):
+        p = sub.add_parser(name)
+        p.add_argument("--animatic", required=True)
+        p.add_argument("--manifest", required=True)
+        if name == "lock":
+            p.add_argument("--user-approved", action="store_true", required=True, help="使用者說了「鎖定」")
+    sub.add_parser("invalidate").add_argument("--reason", required=True)
+    p = sub.add_parser("exception")
+    p.add_argument("--shots", required=True)
+    p.add_argument("--profiles", required=True)
+    p.add_argument("--takes", type=int, required=True)
+    p.add_argument("--reason", required=True)
+    p.add_argument("--user", required=True, help="使用者授權的原話和日期")
+    a = ap.parse_args()
+    root = os.path.abspath(a.project)
+
+    if a.cmd == "check":
+        r = validate_project_gate(root)
+        print("關卡：" + ("通過" if r["ok"] else "沒過"))
+        for code, msg in zip(r["reasons"], r["messages"]):
+            print(f"  ❌ {code}：{msg}")
+        try:
+            exceptions = (load_gate(root) or {}).get("exceptions", [])
+        except ValueError:
+            exceptions = []
+        for e in exceptions:
+            s = e.get("scope", {})
+            print(f"  例外 {e.get('id')}：{'、'.join(s.get('shots', []))}／{'、'.join(s.get('profiles', []))}，"
+                  f"已送出 {used_takes(root, e.get('id'))}／{s.get('takes')} 條（{e.get('reason')}）")
+        sys.exit(0 if r["ok"] else 1)
+    if a.cmd == "fingerprint":
+        manifest = a.manifest or (load_gate(root) or {}).get("approved_animatic_manifest")
+        if not manifest:
+            print("❌ 還沒有鎖：用 --manifest 指定時間軸檔")
+            sys.exit(2)
+        fp, errors = fingerprints(root, canon_path(root, manifest))
+        for k, v in fp.items():
+            print(f"{k}: {v}")
+        for e in errors:
+            print(f"❌ {e}")
+        sys.exit(1 if errors else 0)
+    if a.cmd in ("ready", "lock"):
+        errors = (validate_lock_prerequisites(root, a.animatic, a.manifest) if a.cmd == "ready"
+                  else lock(root, a.animatic, a.manifest, a.user_approved))
+        for e in errors:
+            print(f"❌ {e}")
+        if not errors:
+            print("前置都齊了，可以給使用者看鎖定卡" if a.cmd == "ready" else f"已鎖定：{GATE_FILE}（{canon_path(root, a.animatic)}）")
+        sys.exit(1 if errors else 0)
+    if a.cmd == "invalidate":
+        old = invalidate(root, a.reason)
+        print("沒有 量產關卡.json，沒有鎖可以失效" if old is None else f"state：{old} → INVALID")
+        sys.exit(1 if old is None else 0)
+    if a.cmd == "exception":
+        try:
+            exc = add_exception(root, [s.strip() for s in a.shots.split(",") if s.strip()],
+                                [p.strip() for p in a.profiles.split(",") if p.strip()], a.takes, a.reason, a.user)
+        except ValueError as e:
+            print(f"❌ {e}")
+            sys.exit(1)
+        print(f"已記例外 {exc['id']}：{json.dumps(exc['scope'], ensure_ascii=False)}")
+
+
+if __name__ == "__main__":
+    main()

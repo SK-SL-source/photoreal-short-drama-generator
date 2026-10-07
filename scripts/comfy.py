@@ -5,7 +5,7 @@
 ffmpeg 沒有設定、系統也找不到時，改用這個 Python 環境裡 imageio-ffmpeg 附的那一支。
 其他腳本都從這裡拿設定（from comfy import CFG）。用設定裡的 python 跑。
 """
-import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import hashlib, json, os, secrets, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 try:
     import imageio_ffmpeg   # 選用：系統沒有 ffmpeg 時用它附的那一支
 except ImportError:
@@ -79,7 +79,69 @@ def open_chrome_once(url=BASE):
     open(marker, "w").write("opened")
 
 
-def _post(path, obj):
+class GateBlocked(Exception):
+    """H3 影片沒過送件前檢查（references/4-生成與驗片.md §1）。result＝檢查結果：reasons 是機器讀的代碼，message 給人看"""
+    def __init__(self, result):
+        super().__init__(result["message"])
+        self.result = result
+
+
+H3_GENERATE = ("MiniMaxH3ReferenceToVideo", "MiniMaxH3ImageToVideo")
+VIDEO_OUTPUT = ("VAEDecode", "VAEDecodeTiled", "CreateVideo", "SaveVideo")
+
+
+def _linked(graph, inp, prefix, field, cls):
+    """照 ref_image_0、ref_image_1… 的順序，接進 inp 的每個節點讀的檔名；不是直接讀檔的節點（不是 cls）記 None"""
+    keys = sorted((k for k in inp if k.startswith(prefix)), key=lambda k: int(k.rsplit("_", 1)[1]))
+    return [(inp[k][0], graph[inp[k][0]]["inputs"].get(field) if graph[inp[k][0]]["class_type"] == cls else None) for k in keys]
+
+
+def h3_video_facts(graph):
+    """H3 影片（h3_ref、h3_i2v）送件前檢查要看的事實；不是 H3 影片就回傳 None（Qwen 圖、只解音訊的 h3_voice、h3_vo 都不是）。
+    images＝所有 LoadImage；visual_refs＝照 ref_image_N 順序接進參考的圖，扣掉釘幀用的（首幀、尾幀、片中引導是執行中的檔，不是鎖定的資產）；
+    audios＝照 ref_audio_N 順序接進參考的音色。這兩個順序就是提示詞 <Picture N>、<Audio N> 的 N"""
+    gen = next((n for n in graph.values() if n["class_type"] in H3_GENERATE), None)
+    if gen is None or not any(n["class_type"] in VIDEO_OUTPUT for n in graph.values()):
+        return None
+    inp = gen["inputs"]
+    guided = {n["inputs"]["image"][0] for n in graph.values() if n["class_type"] == "MiniMaxH3AddGuide"}
+    if gen["class_type"] == "MiniMaxH3ImageToVideo":
+        mode, profile, first = "i2v", "i2v", inp["first_frame"][0]
+        guided |= {inp[k][0] for k in ("first_frame", "last_frame") if k in inp}
+    else:
+        pdd = any(n["class_type"] == "MiniMaxH3PDDAccApply" for n in graph.values())
+        mode = "ref"
+        profile = next((k for k, p in PROFILES.items()
+                        if (p["w"], p["h"]) == (inp["width"], inp["height"]) and bool(p.get("pdd")) == pdd), None)
+        first = next((n["inputs"]["image"][0] for n in graph.values()
+                      if n["class_type"] == "MiniMaxH3AddGuide" and n["inputs"]["frame_idx"] == 0), None)
+    images = [(k, n["inputs"]["image"]) for k, n in graph.items() if n["class_type"] == "LoadImage"]
+    refs = _linked(graph, inp, "ref_images.", "image", "LoadImage")
+    return {"key": hashlib.sha256(json.dumps(graph, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest(),
+            "mode": mode, "profile": profile, "frames": inp["length"], "prompt": inp["prompt"], "first_frame": first,
+            "images": images, "visual_refs": [r for r in refs if r[0] not in guided],
+            "audios": _linked(graph, inp, "ref_audios.", "audio", "LoadAudio"),
+            "n_refs": len(refs) if mode == "ref" else len(images)}
+
+
+_permits = {}   # 一次性通行證 {token: (專案, 佇列條目, 節點圖指紋)}：送出前檢查過了才發，用一次就作廢
+
+
+def _issue_permit(job, key):
+    """只給 檢查量產Gate.validate_shot_preflight 在送出前那一次檢查過了呼叫：發一張綁這個專案、這一條、這一張節點圖的通行證"""
+    token = secrets.token_hex(16)
+    _permits[token] = (PROJ, job, key)
+    return token
+
+
+def _post(path, obj, permit=None, job=None):
+    """送 H3 影片要帶 permit：佇列條目 job 剛過送出前檢查時發的一次性通行證，要和這個專案、這一條、這一張節點圖都對得上，用過就作廢。
+    檢查結果的 dict 本身不算數，所以 H3 影片只能經佇列送：comfy.run、直接送件、重播舊的通行證都送不出去"""
+    if path == "/prompt":
+        facts = h3_video_facts(obj["prompt"])
+        if facts and (_permits.pop(permit, None) if isinstance(permit, str) else None) != (PROJ, job, facts["key"]):
+            msg = "H3 影片要經佇列送（佇列.add，由 wait 送出）：送出前檢查過了才有一次性的通行證，comfy.run 和直接送件都不送 H3 影片"
+            raise GateBlocked({"ok": False, "reasons": ["NO_PERMIT"], "messages": [msg], "message": msg})
     req = urllib.request.Request(BASE + path, data=json.dumps(obj).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
     return urllib.request.urlopen(req, timeout=60).read()
@@ -98,7 +160,7 @@ def log(rec):
 
 
 def run(job_id, graph, dests, timeout=3600, meta=None):
-    """送一個圖並等完成；輸出依順序複製到 dests。回傳 (複製後路徑, 錯誤, 秒數)"""
+    """送一個圖並等完成；輸出依順序複製到 dests。回傳 (複製後路徑, 錯誤, 秒數)。H3 影片不能用這個送（_post 會擋），要排進佇列"""
     try:
         resp = json.loads(_post("/prompt", {"prompt": graph, "client_id": "short-drama"}))
     except urllib.error.HTTPError as e:

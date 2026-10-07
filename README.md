@@ -13,12 +13,30 @@
 Claude 照這個 skill 一站一站做，每一站停下來給你看、等你核可：
 
 1. **劇本**：簡報、故事、定稿台詞，拆成事件表。
-2. **分鏡**：先做敘事判斷（每一鏡的拍和表達點、值不值得一鏡），再出視覺聖經、鏡頭表、分鏡卡（敘事目的、鏡頭、動作卡、首幀從哪裡來、每個切點的連戲交接）。
-3. **提示詞**：從核可的分鏡卡編譯成 H3 提示詞，送件前一定過 lint。
-4. **生成與驗片**：經佇列帳本送件；每條片段先量測、產出驗片包，你在聊天裡逐條回「檔名＋過」或「檔名＋改法」。
+2. **分鏡**：先和你把美術方向定下來（視覺聖經、Style Master），做角色卡、場景卡；再做敘事骨架（每一鏡的拍和表達點、值不值得一鏡）、文字分鏡（鏡頭表、分鏡卡：鏡頭、動作卡、首幀從哪裡來、連戲交接）和整集的敘事驗收；然後定每個出聲身份的音色、每鏡一張分鏡參考圖，接成 Animatic 給你看整集。你核可某一版 Animatic，才做 Final Shot Lock，之後正式生成只照這一版。
+3. **提示詞**：Final Shot Lock 之後，從鎖定的分鏡卡編譯成 H3 提示詞，送件前一定過 lint。
+4. **生成與驗片**：H3 片段只能經佇列帳本送，排進來和送出前各過一次量產關卡檢查；每條片段先量測、產出驗片包，你在聊天裡逐條回「檔名＋過」或「檔名＋改法」。
 5. **結案**：旁白、分段配樂、粗剪、細剪、成片，每一版都另存無配樂母版。
 
-skill 內附規則核心、提示詞 lint、鏡頭表檢查、開工檢查、佇列帳本、驗片量測，以及剪接和配樂組合的腳本。
+skill 內附規則核心、提示詞 lint、鏡頭表檢查、量產關卡檢查、開工檢查、佇列帳本、驗片量測，以及剪接（含 Animatic）和配樂組合的腳本。
+
+## v1.2 多了什麼
+
+主題是**量產前置流程**：正式生成之前多了一整段可以被檢查的前置和一道機械執行的關卡，不是換畫風。第 2 站現在分成這幾關：
+
+| 關卡 | 做什麼 |
+|---|---|
+| G3A 美術鎖定 | 先讀劇本提美術方向，用幾個問題和你確認，寫成視覺聖經；生一張 Style Master 當之後每批圖的核可基準。你說「鎖定」才鎖 |
+| G3B 資產 | 角色卡、場景卡、道具卡；資產表登記 ID、檔案、狀態 |
+| G4A 敘事骨架 | 整集先判斷每一鏡的拍、表達點、刪了會少什麼，才寫完整的卡 |
+| G4B 文字分鏡 | 只展開保留的鏡：鏡頭、動作卡、聲音、首幀來源、連戲交接，建鏡頭表 |
+| G4C 敘事驗收 | 用敘事判準把整集看一遍，只列問題鏡，回到負責的那一層修 |
+| G5A 音色資產 | 每個真的出聲的身份一份核可音色，記清楚用在哪幾鏡、是對白還是只在後製用的心聲、旁白 |
+| G5B 分鏡參考圖／首幀 | 每鏡一張預覽圖，用最低夠用的成本做；首幀策略照鏡頭表 |
+| G5C Animatic | 分鏡參考圖照鏡頭表的順序和秒數硬切、放上預覽語音，整集給你看 |
+| G5D Final Shot Lock／量產關卡 | 你核可某一版 Animatic、前置都齊了、你說「鎖定」，才把製作計畫的指紋寫進 `量產關卡.json`；之後計畫一改，正式 H3 就不送 |
+
+skill 固定的是流程、表格、關卡和製作規則。每一案的美術方向——色盤、光、人物和場景長什麼樣——照那一案的劇本和你的決定來，skill 沒有固定的畫風。
 
 ## 需要什麼
 
@@ -83,7 +101,33 @@ skill 內附規則核心、提示詞 lint、鏡頭表檢查、開工檢查、佇
 在 Claude Code 裡說你要做的短劇（例：「用仿真人短劇做一支 60 秒、三個角色的感情戲」），或直接打 `/photoreal-short-drama-generator`。Claude 會先用一張收件卡問畫幅、長度、配樂、參考圖來源和畫風，再一站一站往下做。
 
 - 所有生成（圖、影片、聲音、配樂）都要你同意才會送出。
+- 第 2 站會停下來等你三次：鎖定美術方向、核可完整的 Animatic、說「鎖定」做 Final Shot Lock。沒有這三步，不會開始正式生成。
 - 審片在聊天裡逐條回：「檔名＋過」是核可，「檔名＋改法」是重做。重做照字面做，只改你指定的地方。
+
+## 正式 H3 為什麼會被擋
+
+v1.2 起，H3 影片（`h3_ref`、`h3_i2v`，任何檔位）只能經佇列送，而且要過量產關卡：
+
+- `佇列.add` 排進來時先檢查一次，H3 影片記「待送出」，不會馬上送；`python _腳本/佇列.py wait` 送出前再檢查一次，過了才真的送 ComfyUI。所以「add 完就等於送出了」在 H3 影片上不再成立；看狀態用 `python _腳本/佇列.py`。
+- 關卡看的是：`量產關卡.json` 是 LOCKED、三個指紋（鏡頭表、製作計畫含劇本、核可的 Animatic）都對得上現在的檔；這一條的提示詞和 lint、掛的參考圖和音色是不是鎖定計畫裡的那幾份、順序對不對、模式、幀數、拆段對不對。沒有合法的 Final Shot Lock，也不在你明確核可、範圍有限的例外（`檢查量產Gate.py exception`）裡，H3 影片一律不送；被擋的條目記「關卡擋下」並說出原因。
+- `comfy.run` 和直接送件送不了 H3 影片。
+- Qwen 的圖（卡片、分鏡參考圖、首幀）、`h3_voice` 音色候選、`h3_vo` 旁白和預覽語音不過關卡，行為和以前一樣。
+- 關卡擋在這個 skill 的送件路徑上（佇列、`comfy.py`）；繞開 skill 腳本的任意外部程式不在這套流程的契約裡。
+
+## 舊專案怎麼辦（v1.1.x → v1.2.0）
+
+skill 不會自動改舊專案。舊專案換上 v1.2 的 `scripts\`，Qwen、`h3_voice`、`h3_vo` 照常，但正式 H3 會先收到 `GATE_MISSING`：還沒有 Final Shot Lock。要繼續正式生成，至少要把專案補到能鎖定（規格在 `references/2-分鏡.md` §12）：
+
+1. `2-分鏡.md` 最前面加關卡紀錄表（G3A LOCKED、G4C PASS、G5C PASS 和依據）；
+2. 資產表要有 ID、檔案、狀態三欄，用到的資產狀態＝核可；
+3. 分鏡卡的「素材」改用資產 ID 和 Voice ID，照接入順序；
+4. 音色資產表（G5A）：Voice ID、核可檔、核可用途、使用鏡頭、狀態；
+5. 分鏡參考圖表（G5B）：每個要進製作的鏡一列，三項檢查都過；
+6. 做一版 Animatic（G5C）、你核可，記進關卡紀錄表；
+7. 跑 `python _腳本/檢查量產Gate.py ready …`，齊了再 `lock --user-approved`，產生 `量產關卡.json`；
+8. 送件腳本的 meta 加「鏡」「提示詞」（拆段的鏡加「段」，用例外加「例外」）。
+
+v1.1 專案不是零修改就能鎖定；已經生成好的片段和資產檔案不用重做。
 
 ## 檔案
 
@@ -95,12 +139,13 @@ presets/                   畫風（寫實 3D、實拍電影感）和聲音模�
 scripts/
   設定.json                預設設定（本機值寫在你自己建的 設定.local.json，不在 repo 裡）
   開工檢查.py              檢查 ComfyUI、節點、模型、規則檔
-  comfy.py                 節點圖產生器（PDD 8 步正式、草稿、20 步備用）
-  佇列.py                  佇列帳本：送件、追進度、首幀接力
+  comfy.py                 節點圖產生器（PDD 8 步正式、草稿、20 步備用）；H3 影片的送件出口只認佇列發的通行證
+  佇列.py                  佇列帳本：送件（H3 影片先「待送出」，wait 送出前檢查）、追進度、首幀接力
+  檢查量產Gate.py          量產關卡：鎖定前置、Final Shot Lock、指紋、例外
   h3_prompt_lint.py        提示詞 lint
   檢查鏡頭表.py            鏡頭表檢查
   驗片量測.py              量測和驗片包
-  剪接.py、配樂組合.py     剪接混音、配樂組合
+  剪接.py、配樂組合.py     剪接混音、Animatic、配樂組合
 ```
 
 ## 規則從哪裡來
@@ -153,12 +198,30 @@ Photoreal Short Drama Generator is a Claude Code skill that turns a short-drama 
 Claude works through five stations and stops at each one for your review:
 
 1. **Script**: brief, story, final lines, and an event table.
-2. **Storyboard**: a narrative pass first (each shot's beat and expression point, and whether it earns a shot), then the visual bible, shot table and shot cards (narrative purpose, camera, action card, first-frame source, continuity handoff at each cut).
-3. **Prompts**: H3 prompts compiled from the approved cards and linted before any render.
-4. **Generate and review**: jobs go through a queue ledger; every clip is measured into a review packet, and you approve or redirect clips one by one in chat.
+2. **Storyboard**: the art direction is settled with you first (visual bible, Style Master) and the cards are made; then a narrative skeleton (each shot's beat and expression point, and whether it earns a shot), the text storyboard (shot table and cards: camera, action card, first-frame source, continuity handoff) and a narrative QC pass over the episode; then one approved voice per speaking identity, one storyboard reference image per shot, and an animatic of the whole episode for your review. Only an animatic version you approve becomes the Final Shot Lock, and formal generation follows that version alone.
+3. **Prompts**: after the Final Shot Lock, H3 prompts compiled from the locked cards and linted before any render.
+4. **Generate and review**: H3 clips go only through the queue ledger and pass the production gate when queued and again before dispatch; every clip is measured into a review packet, and you approve or redirect clips one by one in chat.
 5. **Close**: narration, music cues, rough cut, fine cut and the final cut, with a no-music master every time.
 
-The skill bundles a rules core, a prompt lint, a shot-table check, a setup check, the queue ledger, clip measurement tools, and edit and music-assembly scripts. The station guides and the rules core are written in Traditional Chinese; `SKILL.md` is in English.
+The skill bundles a rules core, a prompt lint, a shot-table check, a production-gate checker, a setup check, the queue ledger, clip measurement tools, and edit (including the animatic) and music-assembly scripts. The station guides and the rules core are written in Traditional Chinese; `SKILL.md` is in English.
+
+### What's new in v1.2
+
+The theme is the **mass-production pre-production workflow**: a checkable pre-production stage and a mechanically enforced gate before any formal render, not a new look. Station 2 now has these gates:
+
+| Gate | What it does |
+|---|---|
+| G3A Art direction lock | Art directions proposed from the script and settled with you in a few questions, written into the visual bible; a Style Master becomes the approval reference for every later image batch. Locked only when you say so |
+| G3B Assets | Character, scene and prop cards; the asset table records ID, file and status |
+| G4A Narrative skeleton | For the whole episode first: each shot's beat, its expression point and what is lost without it, before any full card |
+| G4B Text storyboard | Only the kept shots: camera, action card, sound, first-frame source, continuity handoff; then the shot table |
+| G4C Narrative QC | One pass over the episode with the narrative tests; only problem shots are listed and sent back to the layer that owns them |
+| G5A Voice assets | One approved voice per speaking identity, recording its shots and whether it is dialogue or post-only inner voice and narration |
+| G5B Storyboard references / first frames | One preview image per shot at the lowest sufficient cost; the first-frame strategy follows the shot table |
+| G5C Animatic | The storyboard references hard-cut in shot-table order and durations with preview speech, for a whole-episode review |
+| G5D Final Shot Lock / production gate | Once you approve an animatic version, the prerequisites are complete and you say lock, the plan's fingerprints go into `量產關卡.json`; any later change to the plan stops formal H3 clips |
+
+The skill fixes the process, the tables, the gates and the production rules. Each project's art direction, from palette and light to how people and places look, comes from that script and your decisions; the skill has no fixed look.
 
 ### Requirements
 
@@ -176,7 +239,32 @@ The skill bundles a rules core, a prompt lint, a shot-table check, a setup check
 
 ### Use
 
-Describe the short you want in Claude Code, or type `/photoreal-short-drama-generator`. Every generation waits for your approval. Review in chat: "file + 過 (pass)" approves a clip; "file + change" asks for a redo, and a redo changes only what you named.
+Describe the short you want in Claude Code, or type `/photoreal-short-drama-generator`. Every generation waits for your approval. Station 2 stops for you three times: to lock the art direction, to approve the complete animatic, and to say lock for the Final Shot Lock; formal generation does not start without them. Review in chat: "file + 過 (pass)" approves a clip; "file + change" asks for a redo, and a redo changes only what you named.
+
+### Why a formal H3 clip can be blocked
+
+From v1.2, H3 video (`h3_ref`, `h3_i2v`, any profile) goes only through the queue and must pass the production gate:
+
+- `佇列.add` runs a preflight and records an H3 clip as 待送出 (ready) instead of sending it; `python _腳本/佇列.py wait` runs the preflight again right before dispatch and only then submits to ComfyUI. "Added means sent" no longer holds for H3 video; check the state with `python _腳本/佇列.py`.
+- The gate checks that `量產關卡.json` is LOCKED and that its three fingerprints (shot table, production plan including the script, approved animatic) still match the files, and that this clip's prompt and lint, its attached references and voices (identity and order), mode, frames and segment match the locked plan. Without a valid Final Shot Lock, or a narrow exception you explicitly authorized (`檢查量產Gate.py exception`), no H3 video is sent; a blocked job is recorded as 關卡擋下 with the reason.
+- `comfy.run` and direct submission cannot send H3 video.
+- Qwen images (cards, storyboard references, first frames), `h3_voice` candidates and `h3_vo` narration or preview speech are not gated and behave as before.
+- The gate is enforced on this skill's submission path (the queue and `comfy.py`). Arbitrary external code that bypasses the skill scripts is outside the workflow contract.
+
+### Migrating a v1.1.x project
+
+The skill does not change old projects by itself. With the v1.2 scripts an old project still runs Qwen, `h3_voice` and `h3_vo`, but a formal H3 clip first gets `GATE_MISSING`: there is no Final Shot Lock yet. To continue formal production, bring the project up to the lockable state (the spec is `references/2-分鏡.md` §12):
+
+1. a gate record table at the top of `2-分鏡.md` (G3A LOCKED, G4C PASS, G5C PASS, each with its evidence);
+2. an asset table with ID, file and status columns, with every used asset approved;
+3. shot cards whose 素材 line uses asset IDs and Voice IDs in attachment order;
+4. the voice asset table (G5A): Voice ID, approved file, approved use, shots used, status;
+5. the storyboard reference table (G5B): one row per shot that goes into production, all three checks passed;
+6. one animatic version (G5C) approved by you and recorded in the gate record;
+7. `python _腳本/檢查量產Gate.py ready …`, then `lock --user-approved`, which writes `量產關卡.json`;
+8. job scripts whose meta carries 鏡 and 提示詞 (plus 段 for split shots and 例外 under an exception).
+
+A v1.1 project cannot be locked with zero changes; finished clips and asset files do not need to be redone.
 
 ### Where the rules come from
 

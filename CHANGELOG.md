@@ -1,5 +1,47 @@
 # 更新紀錄
 
+## 1.2.0（2026-10-07）
+
+主題：量產前置流程（mass-production pre-production workflow）。正式生成之前多了一整段可檢查的前置和一道機械執行的量產關卡；畫風不固定，每一案的美術方向照劇本和使用者的決定。
+
+### Added
+- G3A 美術鎖定：訪談 → 視覺聖經 → Style Master（之後每批圖的核可基準）→ 使用者說「鎖定」才鎖。
+- G4A 敘事骨架、G4B 文字分鏡、G4C 敘事驗收：整集先判斷每一鏡值不值得拍，只展開保留的鏡，再用敘事判準驗收一遍。
+- G5A 音色資產：每個出聲身份一份核可音色，登記核可用途和使用鏡頭（`S05`＝在 H3 片段裡出聲、送件要掛；`S05（心聲）`、`S05（旁白）`＝只在後製和 Animatic 用）。
+- G5B 分鏡參考圖與首幀：每個要進製作的鏡一張預覽圖（`2-分鏡圖\`），用最低夠用的成本做；首幀策略照鏡頭表，接力的首幀送件前才解析。
+- G5C Animatic：`剪接.py` 支援靜態圖＋秒數、鏡內語音疊加、QC 疊字和 `--dry-run`；每一版 `2-預覽\animatic_vNN.mp4` 加同名時間軸檔。
+- G5D Final Shot Lock 與量產關卡：新增 `scripts/檢查量產Gate.py`（`ready`、`lock --user-approved`、`check`、`fingerprint`、`invalidate`、`exception`），把製作計畫的三個指紋寫進 `量產關卡.json`。
+- H3 佇列雙重送件前檢查：`佇列.add` 排進來時一次、`wait` 送出前一次。
+- 範圍有限的例外：使用者明確授權、記進 `量產關卡.json`（鏡、檔位、條數），只在真的送出時扣條數。
+
+### Changed
+- H3 影片 `佇列.add` 不再立刻送出：先記「待送出」，由 `wait` 送出；Qwen 圖、`h3_voice`、`h3_vo` 照舊立刻送。
+- 正式提示詞在 Final Shot Lock 之後才編譯，只從鎖定的分鏡卡、資產、音色、首幀策略編譯。
+- 資產改用 ID 引用：分鏡卡「素材」寫資產 ID 和 Voice ID（照接入順序＝`<Picture N>`、`<Audio N>`）；鏡頭表「參考圖」和資產表「用在」是鏡像，不是第二個來源。
+- 音色用途分成在 H3 片段裡出聲（必掛）和只在後製用（心聲、旁白，不掛）。
+- 首幀檔屬執行中的狀態，和鎖定的計畫分開：`PENDING PRODUCTION RELAY` 解成實際檔案不會讓鎖失效。
+
+### Safety / Validation
+- `1-劇本.md` 全文進製作計畫指紋（Story Truth 只有一份）。
+- 只算用到的資產和音色：沒被引用的資產、沒被使用的音色改了不會假失效。
+- 送件前比對參考圖的身份和順序（`ASSET_REQUIRED_MISSING`、`ASSET_WRONG_ID`、`ASSET_UNAPPROVED`、`ASSET_ORDER_MISMATCH`）和音色的身份和順序（`VOICE_REQUIRED_MISSING`、`VOICE_WRONG_ID`、`VOICE_UNAPPROVED`、`VOICE_ORDER_MISMATCH`）。
+- 鎖定前置從專案檔核對（關卡紀錄表、資產和音色的狀態、分鏡參考圖表、鏡像欄位一致），工單不算依據。
+- H3 送件要一次性通行證：送出前檢查過了才發、綁專案、條目、節點圖，用一次就作廢；`comfy.run` 和直接送件送不了 H3 影片（`NO_PERMIT`）。
+- 關卡和例外的輸入檢查不用 `assert`，`python -O` 下照樣擋。
+
+### Compatibility
+- v1.1.x 專案換上 v1.2 的 scripts，正式 H3 會先收到 `GATE_MISSING`；要繼續正式生成，先照 README 的「舊專案怎麼辦」補齊關卡紀錄表、資產表欄位、素材 ID、音色資產表、分鏡參考圖表、Animatic 核可和送件 meta，再鎖定。Qwen、`h3_voice`、`h3_vo` 和既有片段不受影響。
+
+### Known limitations
+- Style Master 掛進 `qwen_edit` 當 conditioning：【未驗證】，只當核可基準用。
+- `h3_vo` 念角色對白當預覽語音：【未驗證】（旁白、心聲實際用過）。
+- 舊專案要先 migration 才能鎖定。
+- 量產關卡只對這個 skill 的送件路徑（佇列、`comfy.py`）執行；非標準的自訂 AddGuide 節點圖，和繞開 skill 腳本的任意外部程式，不在這套流程的契約裡。
+- 關卡紀錄表 G5C 依據裡的路徑不能含空白。
+- `1-劇本.md` 和鏡頭表的台詞都進指紋，但兩邊沒有語意級的自動核對。
+
+回歸：Gate T01–T30、Release audit A／P／G、E2E E01–E14、既有的 lint、鏡頭表、剪接回歸全過（網路 0、生成 0）；測試工具在本機，可攜版列 1.2.1。
+
 ## 1.1.1（2026-10-06）
 
 照審閱意見修正 1.1.0 的景別檢查和文件措辭。

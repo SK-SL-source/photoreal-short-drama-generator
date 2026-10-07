@@ -2,7 +2,7 @@
 
 ## 風格句
 
-角色卡、場景卡、首幀、影片逐字用同一句；全片固定，換場景只換光態：
+角色卡、場景卡、分鏡參考圖、首幀、影片逐字用同一句；全片固定，換場景只換光態：
 
 ```text
 Live-action film footage, {光態}, {色調}, natural matte skin, normal skin tones, realistic detail.
@@ -13,6 +13,6 @@ Live-action film footage, {光態}, {色調}, natural matte skin, normal skin to
 - {光態}{色調} 照視覺聖經填，例：`soft morning daylight from a tall window on the left`、`cool grey shadows with warm skin highlights`。
 - 參考圖可以用實拍照片：實拍照片本來就會把畫風拉向寫實（規則核心 §5.5）。
 
-## 視覺聖經的預設值、角色卡、場景卡
+## 視覺聖經的預設值、角色卡、場景卡、Style Master、分鏡參考圖
 
 照 `photoreal-3d.md`。
