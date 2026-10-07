@@ -94,7 +94,7 @@ Follow `references/3-提示詞.md` once G5D is locked: route each shot to an H3 
 
 ## Station 4: Generate and review
 
-Follow `references/4-生成與驗片.md`: queue only authorized items that pass the per-shot preflight through the queue ledger (`_腳本/佇列.py`, which also relays first frames), run the review packet on each clip, list the clips waiting for review and take the user's item-by-item replies, record the status in the shot table, and handle failures within the rework limits (G7).
+Follow `references/4-生成與驗片.md`: queue only authorized items that pass the per-shot preflight through the queue ledger (`_腳本/佇列.py`, which also relays first frames), let the queue run the review packet on each finished clip (a clip without a packet, or without the user's 過, cannot be cut into the film), list the clips waiting for review and take the user's item-by-item replies, record the status in the shot table, and handle failures within the rework limits (G7).
 
 ## Station 5: Close
 

@@ -16,10 +16,10 @@ H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出�
     python 佇列.py release 編號…   前一條被 cut 攔下、人看過沒問題，放行這幾條
     python 佇列.py cancel 編號…    從 ComfyUI 拿掉（正在跑的會中斷）
 """
-import json, os, shutil, subprocess, sys, time, urllib.error, urllib.request
+import argparse, contextlib, io, json, os, shutil, subprocess, sys, time, urllib.error, urllib.request
 import comfy
 import 檢查量產Gate as gate
-from 驗片量測 import cut_one
+from 驗片量測 import cmd_pack, cut_one
 
 sys.stdout.reconfigure(encoding="utf-8")
 DIR = os.path.join(comfy.PROJ, "_腳本", "佇列")
@@ -114,8 +114,34 @@ def _finish(j, entry):
             shutil.copy2(src, dst)
             got.append(dst)
         j.update(state=DONE if got else FAILED, files=got, error=None if got else "沒有輸出")
+        if got and comfy.h3_video_facts(j["graph"]):   # H3 片段：完成就跑驗片包（4-生成與驗片.md §3），人看了才判定
+            _review(j)
     comfy.log({"job": j["id"], "prompt_id": j["prompt_id"], "sec": j.get("sec"), "files": j.get("files"),
-               "error": j.get("error"), **j["meta"]})
+               "error": j.get("error"), "cut": (j.get("review") or {}).get("cut"), "驗片包": (j.get("review") or {}).get("驗片包"),
+               **j["meta"]})
+
+
+def _review(j):
+    """H3 片段完成就跑驗片包（4-生成與驗片.md §3）：量測寫進 4-影片/驗片/片名/，cut 結果記進帳本和生成紀錄。
+    這只是量測和草稿，判定還是人看過才寫；剪接.py 沒看到驗片包和核可狀態不出片（5-結案.md §5）。
+    首幀：接力取到的那一格，或節點圖釘在第 0 幀的那張圖；都沒有就不比第 0 幀"""
+    video = j["files"][0]
+    first = j.get("relay_frame")
+    if not first:
+        facts = comfy.h3_video_facts(j["graph"])
+        name = dict(facts["images"]).get(facts["first_frame"]) if facts["first_frame"] else None
+        if name and os.path.isfile(os.path.join(comfy.INP, name)):
+            first = os.path.join(comfy.INP, name)
+    try:
+        r = cut_one(video)
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_pack(argparse.Namespace(video=video, first=first, end=None, prev=None, next=None, out=None, json=False))
+        pack = os.path.join(os.path.dirname(video), "驗片", os.path.splitext(os.path.basename(video))[0], "驗片包.md")
+        j["review"] = {"驗片包": os.path.relpath(pack, comfy.PROJ).replace(os.sep, "/"), "cut": r}
+        print(f"[{j['id']}] 驗片包 {j['review']['驗片包']}｜cut：{'疑似切鏡或漏出參考圖，要看' if r['有問題'] else '沒有切鏡'}", flush=True)
+    except Exception as e:   # 量測失敗不改片段的狀態，但沒有驗片包就進不了成片，要補跑 pack
+        j["review"] = {"error": f"驗片包沒跑成：{e}"}
+        print(f"[{j['id']}] ⚠️ 驗片包沒跑成（{e}）：補跑 python _腳本/驗片量測.py pack {video}", flush=True)
 
 
 def _relay(j, src, check=True):

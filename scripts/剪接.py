@@ -26,8 +26,8 @@ G5C Animatic 也用這支：分鏡參考圖照鏡頭表的秒數硬切接起來�
 - 限幅先升取樣到 192k 再壓（壓得到取樣點之間的峰值），並關掉自動拉大音量；直接 alimiter 時成片 true peak 會超過 0 dBTP。
 - 剪完自動比對畫面和聲音的長度，差超過一格就報錯（結束碼 2）。
 """
-import os, re, subprocess, sys
-from comfy import CFG, PROFILES, need_file, read_json
+import csv, os, re, subprocess, sys
+from comfy import CFG, PROFILES, PROJ, need_file, read_json
 sys.stdout.reconfigure(encoding="utf-8")
 FF = CFG["ffmpeg"]
 W, H = PROFILES["formal"]["w"], PROFILES["formal"]["h"]   # 靜態圖縮放到正式檔位的畫布
@@ -102,6 +102,50 @@ for i, (path, *_, n) in enumerate(clips):
         if t + d > (n + 1) / FPS:
             print(f"⚠️ {name}：{os.path.basename(p)} 從鏡內 {t:g} 秒放、長 {d:.2f} 秒，超過這一條 {t + d - n / FPS:.2f} 秒")
         overlays.append([p, starts[i] / FPS + t, g])
+# ---- 成片只收核可片（5-結案.md §5）：每條片段要有 label；鏡頭表那一鏡的狀態是「過（檔名、日期）」且含這個檔名；驗片包在；
+#      驗片包 cut 標「要看」的要有人工判定檔 片名_驗片.md。靜態圖（Animatic）不在此限。缺一條就 ❌ 不出片，--dry-run 也報
+問題 = []
+if not all(stills):
+    table = os.path.join(PROJ, "2-鏡頭表.csv")
+    rows = {}
+    if not os.path.isfile(table):
+        問題.append(f"❌ 找不到鏡頭表 {table}：成片只能在專案資料夾出，片段核可了沒從鏡頭表讀")
+    else:
+        with open(table, encoding="utf-8-sig", newline="") as f:
+            rows = {(r.get("鏡號") or "").strip(): {k.strip(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(f)}
+    for i, ((path, s, e, sp, n), still, label) in enumerate(zip(clips, stills, labels)):
+        if still:
+            continue
+        base = os.path.basename(path)
+        stem = os.path.splitext(base)[0]
+        m = re.fullmatch(r"(S\d+)\s*([AB])?", (label or "").strip())
+        if not m:
+            問題.append(f"❌ {base}：成片的片段要寫 label（鏡號，拆段加 A／B，例：S08B），現在是「{label or '沒寫'}」")
+            continue
+        shot, seg = m.group(1), m.group(2) or ""
+        row = rows.get(shot)
+        if row is None:
+            if rows:
+                問題.append(f"❌ {label}：鏡頭表沒有 {shot}")
+            continue
+        status = row.get("狀態", "")
+        if not (status.startswith("過") and (base in status or stem in status)):
+            問題.append(f"❌ {label}：鏡頭表狀態是「{status or '沒寫'}」，要是「過（{base}、日期）」才進成片（使用者逐條核可，4-生成與驗片.md §3）")
+        pack = os.path.join(os.path.dirname(path), "驗片", stem, "驗片包.md")
+        if not os.path.isfile(pack):
+            問題.append(f"❌ {label}：沒有驗片包 {os.path.relpath(pack, PROJ)}（先跑 python _腳本/驗片量測.py pack {os.path.relpath(path, PROJ)}）")
+        else:
+            cut_line = next((l for l in open(pack, encoding="utf-8").read().split("\n") if "片中切鏡" in l), "")
+            note = os.path.join(os.path.dirname(path), f"{stem}_驗片.md")
+            if "要看" in cut_line and not os.path.isfile(note):
+                問題.append(f"❌ {label}：驗片包說疑似切鏡或漏出參考圖、要看；人看過把判定寫進 {os.path.relpath(note, PROJ)} 才能進成片")
+        # TRIM_CHECK_ANCHOR
+if 問題:
+    for p in 問題:
+        print(p)
+    print("❌ 成片只收核可片、照分鏡卡取段（5-結案.md §5）；修好再出片")
+    sys.exit(1)
+
 if DRY:
     print(f"總長 {total} 秒；--dry-run 不出片")
     sys.exit(0)
