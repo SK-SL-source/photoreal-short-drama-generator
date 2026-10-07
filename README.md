@@ -109,7 +109,7 @@ skill 固定的是流程、表格、關卡和製作規則。每一案的美術�
 v1.2 起，H3 影片（`h3_ref`、`h3_i2v`，任何檔位）只能經佇列送，而且要過量產關卡：
 
 - `佇列.add` 排進來時先檢查一次，H3 影片記「待送出」，不會馬上送；`python _腳本/佇列.py wait` 送出前再檢查一次，過了才真的送 ComfyUI。所以「add 完就等於送出了」在 H3 影片上不再成立；看狀態用 `python _腳本/佇列.py`。
-- 關卡看的是：`量產關卡.json` 是 LOCKED、三個指紋（鏡頭表、製作計畫含劇本、核可的 Animatic）都對得上現在的檔；這一條的提示詞和 lint、掛的參考圖和音色是不是鎖定計畫裡的那幾份、順序對不對、模式、幀數、拆段對不對。沒有合法的 Final Shot Lock，也不在你明確核可、範圍有限的例外（`檢查量產Gate.py exception`）裡，H3 影片一律不送；被擋的條目記「關卡擋下」並說出原因。
+- 關卡看的是：`量產關卡.json` 是 LOCKED、三個指紋（鏡頭表、製作計畫含劇本、核可的 Animatic）都對得上現在的檔；這一條的提示詞和 lint、掛的參考圖和音色是不是鎖定計畫裡的那幾份、順序對不對、模式、幀數、拆段對不對。沒有合法的 Final Shot Lock，也不在你明確核可、範圍有限的例外（`檢查量產Gate.py exception`，你的原話要有「例外」和鏡號）裡，H3 影片一律不送；被擋的條目記「關卡擋下」並說出原因。
 - `comfy.run` 和直接送件送不了 H3 影片。
 - Qwen 的圖（卡片、分鏡參考圖、首幀）、`h3_voice` 音色候選、`h3_vo` 旁白和預覽語音不過關卡，行為和以前一樣。
 - 關卡擋在這個 skill 的送件路徑上（佇列、`comfy.py`）；繞開 skill 腳本的任意外部程式不在這套流程的契約裡。
@@ -124,7 +124,7 @@ skill 不會自動改舊專案。舊專案換上 v1.2 的 `scripts\`，Qwen、`h
 4. 音色資產表（G5A）：Voice ID、核可檔、核可用途、使用鏡頭、狀態；
 5. 分鏡參考圖表（G5B）：每個要進製作的鏡一列，三項檢查都過；
 6. 做一版 Animatic（G5C）、你核可，記進關卡紀錄表；
-7. 跑 `python _腳本/檢查量產Gate.py ready …`，齊了再 `lock --user-approved`，產生 `量產關卡.json`；
+7. 跑 `python _腳本/檢查量產Gate.py ready …`，齊了、你說了「鎖定」，再 `lock --user "你的原話"`，產生 `量產關卡.json`；
 8. 送件腳本的 meta 加「鏡」「提示詞」（拆段的鏡加「段」，用例外加「例外」）。
 
 v1.1 專案不是零修改就能鎖定；已經生成好的片段和資產檔案不用重做。
@@ -246,7 +246,7 @@ Describe the short you want in Claude Code, or type `/photoreal-short-drama-gene
 From v1.2, H3 video (`h3_ref`, `h3_i2v`, any profile) goes only through the queue and must pass the production gate:
 
 - `佇列.add` runs a preflight and records an H3 clip as 待送出 (ready) instead of sending it; `python _腳本/佇列.py wait` runs the preflight again right before dispatch and only then submits to ComfyUI. "Added means sent" no longer holds for H3 video; check the state with `python _腳本/佇列.py`.
-- The gate checks that `量產關卡.json` is LOCKED and that its three fingerprints (shot table, production plan including the script, approved animatic) still match the files, and that this clip's prompt and lint, its attached references and voices (identity and order), mode, frames and segment match the locked plan. Without a valid Final Shot Lock, or a narrow exception you explicitly authorized (`檢查量產Gate.py exception`), no H3 video is sent; a blocked job is recorded as 關卡擋下 with the reason.
+- The gate checks that `量產關卡.json` is LOCKED and that its three fingerprints (shot table, production plan including the script, approved animatic) still match the files, and that this clip's prompt and lint, its attached references and voices (identity and order), mode, frames and segment match the locked plan. Without a valid Final Shot Lock, or a narrow exception you explicitly authorized (`檢查量產Gate.py exception`; your own words must say 例外 and name the shots), no H3 video is sent; a blocked job is recorded as 關卡擋下 with the reason.
 - `comfy.run` and direct submission cannot send H3 video.
 - Qwen images (cards, storyboard references, first frames), `h3_voice` candidates and `h3_vo` narration or preview speech are not gated and behave as before.
 - The gate is enforced on this skill's submission path (the queue and `comfy.py`). Arbitrary external code that bypasses the skill scripts is outside the workflow contract.
@@ -261,7 +261,7 @@ The skill does not change old projects by itself. With the v1.2 scripts an old p
 4. the voice asset table (G5A): Voice ID, approved file, approved use, shots used, status;
 5. the storyboard reference table (G5B): one row per shot that goes into production, all three checks passed;
 6. one animatic version (G5C) approved by you and recorded in the gate record;
-7. `python _腳本/檢查量產Gate.py ready …`, then `lock --user-approved`, which writes `量產關卡.json`;
+7. `python _腳本/檢查量產Gate.py ready …`, then, once you have said 鎖定 (lock), `lock --user "your words"`, which writes `量產關卡.json`;
 8. job scripts whose meta carries 鏡 and 提示詞 (plus 段 for split shots and 例外 under an exception).
 
 A v1.1 project cannot be locked with zero changes; finished clips and asset files do not need to be redone.

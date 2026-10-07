@@ -5,12 +5,13 @@
     python _腳本/檢查量產Gate.py fingerprint        印出現在的三個指紋（不寫檔）
     python _腳本/檢查量產Gate.py ready --animatic 2-預覽/animatic_v03.mp4 --manifest 2-預覽/animatic_v03.json
         鎖定前先跑：前置都齊了沒（不寫檔），給使用者看鎖定卡之前用
-    python _腳本/檢查量產Gate.py lock --animatic 2-預覽/animatic_v03.mp4 --manifest 2-預覽/animatic_v03.json --user-approved
-        使用者說了「鎖定」才跑：前置沒齊就不鎖；齊了才算指紋、寫 量產關卡.json（state＝LOCKED）。程式不會因為檔案齊全就自己鎖
+    python _腳本/檢查量產Gate.py lock --animatic 2-預覽/animatic_v03.mp4 --manifest 2-預覽/animatic_v03.json --user "使用者 2026-10-07：「鎖定」"
+        使用者說了「鎖定」才跑，--user 填他的原話和日期（原話裡要有「鎖定」，記進 locked_by_user）：前置沒齊就不鎖；
+        齊了才算指紋、寫 量產關卡.json（state＝LOCKED）。程式不會因為檔案齊全就自己鎖
     python _腳本/檢查量產Gate.py invalidate --reason "S03 改台詞"
         使用者要改鎖定的內容：state 改成 INVALID。沒有反過來的命令，要重新鎖定就重跑 lock
-    python _腳本/檢查量產Gate.py exception --shots S01 --profiles draft --takes 3 --reason "S01 景別測試" --user "使用者的原話和日期"
-        記一條例外，編號自動給（EXC-001…）
+    python _腳本/檢查量產Gate.py exception --shots S01 --profiles draft --takes 3 --reason "S01 景別測試" --user "使用者 2026-10-07：「例外生成 S01 草稿 3 條」"
+        記一條例外，編號自動給（EXC-001…）。--user 是使用者的原話和日期，裡面要有「例外」和每個鏡號，「現在就送」「先跑看看」不算
 """
 import argparse, csv, datetime, hashlib, io, json, os, re, subprocess, sys
 import comfy
@@ -461,8 +462,20 @@ def used_takes(root, exc_id):
     return len(sent)
 
 
+def user_text_problem(text, shots, word):
+    """使用者的授權原話要有關鍵字（「例外」或「鎖定」）和範圍內每個鏡號，才算明確授權（2-分鏡.md §12）。
+    這擋的是「現在就送」「OK 繼續」這種隨口一句被當成授權，擋不住刻意把字打進去。回傳問題說明；沒問題回傳 None"""
+    text = text if isinstance(text, str) else ""
+    if word not in text:
+        return f"沒有「{word}」這個字（現在是「{text[:60]}」）"
+    missing = [s for s in shots if s and s not in text]
+    if missing:
+        return f"沒有提到鏡號 {'、'.join(missing)}（現在是「{text[:60]}」）"
+    return None
+
+
 def validate_exception(gate, exc_id, shot, profile, used):
-    """例外：鏡、檔位、剩下的條數全部符合才放行；範圍要列出鏡號，沒有整個專案關掉關卡這種例外"""
+    """例外：鏡、檔位、剩下的條數全部符合才放行；範圍要列出鏡號，沒有整個專案關掉關卡這種例外；使用者原話要有「例外」和鏡號"""
     exc = next((e for e in (gate or {}).get("exceptions", []) if e.get("id") == exc_id), None)
     if exc is None:
         return _result([("EXC_NOT_FOUND", f"{GATE_FILE} 沒有例外 {exc_id}")])
@@ -473,6 +486,9 @@ def validate_exception(gate, exc_id, shot, profile, used):
         return _result([("EXC_INCOMPLETE", f"例外 {exc_id} 缺 {'、'.join(missing)}")])
     if any("*" in s or s.lower() in ("all", "全部") for s in scope["shots"]):
         return _result([("EXC_SCOPE_TOO_WIDE", f"例外 {exc_id} 的 shots 要列出鏡號，不能是全部")])
+    bad = user_text_problem(exc.get("authorized_by_user"), scope["shots"], "例外")
+    if bad:
+        return _result([("EXC_USER_TEXT", f"例外 {exc_id} 的使用者原話{bad}：要像「例外生成 S05 草稿 2 條」那樣明確")])
     fails = []
     if shot not in scope["shots"]:
         fails.append(("EXC_SHOT", f"例外 {exc_id} 只涵蓋 {'、'.join(scope['shots'])}，不含 {shot}"))
@@ -761,11 +777,12 @@ def _write(root, g):
     os.replace(path + ".tmp", path)
 
 
-def lock(root, animatic, manifest, user_approved):
-    """Final Shot Lock：使用者說了「鎖定」之後才呼叫。前置沒齊就不鎖；齊了才算三個指紋寫進 量產關卡.json（state＝LOCKED），原有的例外留著。
-    回傳錯誤清單（空＝鎖好了）"""
-    if user_approved is not True:
-        return ["要使用者說了「鎖定」才能鎖（--user-approved）"]
+def lock(root, animatic, manifest, user):
+    """Final Shot Lock：使用者說了「鎖定」之後才呼叫，user＝他的原話和日期（要有「鎖定」）。前置沒齊就不鎖；
+    齊了才算三個指紋寫進 量產關卡.json（state＝LOCKED、locked_by_user＝原話），原有的例外留著。回傳錯誤清單（空＝鎖好了）"""
+    bad = user_text_problem(user, [], "鎖定")
+    if bad:
+        return [f"要使用者說了「鎖定」才能鎖：--user 的原話{bad}"]
     errors = validate_lock_prerequisites(root, animatic, manifest)
     if errors:
         return errors
@@ -774,8 +791,8 @@ def lock(root, animatic, manifest, user_approved):
     if errors:
         return errors
     old = load_gate(root) or {}
-    _write(root, {"schema_version": SCHEMA_VERSION, "state": "LOCKED", "locked_at": _now(), "approved_animatic": animatic,
-                  "approved_animatic_manifest": manifest, **fp, "exceptions": old.get("exceptions", [])})
+    _write(root, {"schema_version": SCHEMA_VERSION, "state": "LOCKED", "locked_at": _now(), "locked_by_user": user,
+                  "approved_animatic": animatic, "approved_animatic_manifest": manifest, **fp, "exceptions": old.get("exceptions", [])})
     return []
 
 
@@ -801,6 +818,9 @@ def add_exception(root, shots, profiles, takes, reason, user):
         raise ValueError("takes 至少 1")
     if not reason or not user:
         raise ValueError("要寫原因（reason）和使用者授權的原話（user）")
+    bad = user_text_problem(user, shots, "例外")
+    if bad:
+        raise ValueError(f"使用者原話{bad}：要像「例外生成 S01 草稿 3 條」那樣，有「例外」和每個鏡號；「現在就送」「先跑看看」不算授權")
     g = load_gate(root) or {"schema_version": SCHEMA_VERSION, "state": "INVALID", "exceptions": []}
     n = max([int(e["id"][4:]) for e in g.get("exceptions", []) if re.fullmatch(r"EXC-\d+", e.get("id", ""))] + [0]) + 1
     exc = {"id": f"EXC-{n:03d}", "scope": {"shots": shots, "profiles": profiles, "takes": takes},
@@ -821,7 +841,7 @@ def main():
         p.add_argument("--animatic", required=True)
         p.add_argument("--manifest", required=True)
         if name == "lock":
-            p.add_argument("--user-approved", action="store_true", required=True, help="使用者說了「鎖定」")
+            p.add_argument("--user", required=True, help="使用者說「鎖定」的原話和日期（要有「鎖定」）")
     sub.add_parser("invalidate").add_argument("--reason", required=True)
     p = sub.add_parser("exception")
     p.add_argument("--shots", required=True)
@@ -859,7 +879,7 @@ def main():
         sys.exit(1 if errors else 0)
     if a.cmd in ("ready", "lock"):
         errors = (validate_lock_prerequisites(root, a.animatic, a.manifest) if a.cmd == "ready"
-                  else lock(root, a.animatic, a.manifest, a.user_approved))
+                  else lock(root, a.animatic, a.manifest, a.user))
         for e in errors:
             print(f"❌ {e}")
         if not errors:
