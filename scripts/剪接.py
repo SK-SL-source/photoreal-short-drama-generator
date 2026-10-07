@@ -24,6 +24,7 @@ G5C Animatic 也用這支：分鏡參考圖照鏡頭表的秒數硬切接起來�
 }
 - 剪點自動對齊影格：起點取最近的一格，長度取整數格（變速時以輸出格數算）。沒對齊時每段畫面會多出半格，聲音和畫面越剪越歪。
 - 限幅先升取樣到 192k 再壓（壓得到取樣點之間的峰值），並關掉自動拉大音量；直接 alimiter 時成片 true peak 會超過 0 dBTP。
+- 每條畫面先 settb=AVTB 再接：不然硬切（concat）或淡化（xfade）之後的下一個交叉淡化會因為時基不同出不了片。
 - 剪完自動比對畫面和聲音的長度，差超過一格就報錯（結束碼 2）。
 """
 import csv, os, re, subprocess, sys
@@ -199,7 +200,9 @@ fc, alab = [], []
 for i, (_, s, e, sp, n) in enumerate(clips):
     fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1," if stills[i] else ""
     tag = f",drawtext=text='{labels[i]}':x=24:y=24:{QC_STYLE}" if cfg.get("qc_overlay") and labels[i] else ""
-    fc.append(f"[{i}:v]{fit}trim=start={s}:end={e},setpts=(PTS-STARTPTS)/{sp},fps={FPS},format=yuv420p{tag}[v{i}]")
+    # settb=AVTB：concat 和 xfade 吐出來的時基是 1/1000000，下一條還是 1/24 的話，第二個以後的 xfade 會報
+    # 「timebase do not match」出不了片（ffmpeg 6.1、7.1 都會）；每條先統一成 AVTB 就都接得上
+    fc.append(f"[{i}:v]{fit}trim=start={s}:end={e},setpts=(PTS-STARTPTS)/{sp},fps={FPS},format=yuv420p{tag},settb=AVTB[v{i}]")
     if stills[i]:   # 靜態圖沒有聲音：配一段一樣長的靜音
         fc.append(f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=end={n / FPS}[a{i}]")
     else:
