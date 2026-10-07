@@ -8,7 +8,7 @@ H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出�
     g = comfy.h3_ref(…, guide0=True, **comfy.PROFILES["formal"])
     佇列.add("S03_r1_s1001", g, ["4-影片/S03_r1_s1001.mp4"], meta={"鏡": "S03", "提示詞": "3-提示詞/S03.txt", "seed": 1001})
     佇列.add("S04_r1_s1001", g4, ["4-影片/S04_r1_s1001.mp4"], after=("S03_r1_s1001", -1, "100"), meta={"鏡": "S04", …})
-        # after＝(前一條, 第幾格（−1＝最後一格）, 要換圖的 LoadImage 節點)
+        # after＝(前一條, 第幾格（−1＝最後一格）, 要換圖的 LoadImage 節點)；接力、借格、B 段的鏡一定要給，送件前檢查核對它接的就是計畫寫的那一鏡那一格
         # H3 影片的 meta 要有「鏡」「提示詞」；拆段的鏡加「段」（A／B），用例外加「例外」（例：EXC-001）
 命令列：
     python 佇列.py                看狀態（不改帳本）
@@ -55,8 +55,7 @@ def _say(job):
 def _submit(job):
     facts, pre = comfy.h3_video_facts(job["graph"]), None
     if facts:   # H3 影片：真的送出前再過一次送件前檢查（排進來之後關卡可能已經失效）
-        pre = gate.validate_shot_preflight(facts, job["meta"], "dispatch", relay_node=(job["after"] or [None] * 3)[2],
-                                           relay_frame=job.get("relay_frame"), job=job["id"])
+        pre = gate.validate_shot_preflight(facts, job["meta"], "dispatch", after=job["after"], relay_frame=job.get("relay_frame"), job=job["id"])
         if not pre["ok"]:
             job.update(state=BLOCKED, error=pre["message"], gate=pre["reasons"])
             return
@@ -88,7 +87,7 @@ def add(job_id, graph, dests, after=None, front=False, meta=None):
         raise ValueError(f"節點 {after[2]} 不是 LoadImage")
     facts = comfy.h3_video_facts(graph)
     if facts:
-        pre = gate.validate_shot_preflight(facts, meta or {}, "add", relay_node=after[2] if after else None)
+        pre = gate.validate_shot_preflight(facts, meta or {}, "add", after=list(after) if after else None)
         if not pre["ok"]:
             raise comfy.GateBlocked(pre)
     job = {"id": job_id, "graph": graph, "dests": list(dests), "after": list(after) if after else None, "front": front,

@@ -12,7 +12,7 @@
     python _腳本/檢查量產Gate.py exception --shots S01 --profiles draft --takes 3 --reason "S01 景別測試" --user "使用者的原話和日期"
         記一條例外，編號自動給（EXC-001…）
 """
-import argparse, csv, datetime, hashlib, io, json, os, re, sys
+import argparse, csv, datetime, hashlib, io, json, os, re, subprocess, sys
 import comfy
 import h3_prompt_lint
 
@@ -325,12 +325,41 @@ def fingerprints(root, manifest):
 
 # ---------- 鎖定前置 ----------
 
+def _animatic_vs_table(root, manifest, rows, boards):
+    """G5C 核可的時間軸檔要和鏡頭表一致：一鏡一段、label＝鏡號、順序同鏡頭表、image＝§10 那一鏡的分鏡參考圖、seconds＝鏡頭表的秒數
+    （換成影格比，fps 照時間軸檔、預設 24）。漏鏡、多鏡、順序錯、錯圖、秒數不同都回報；時間軸檔讀不了交給 fingerprints 報"""
+    try:
+        cfg = json.loads(_text(_abs(root, manifest)))
+    except (FileNotFoundError, ValueError):
+        return []
+    fps, clips, errors = cfg.get("fps") or 24, cfg.get("clips") or [], []
+    if len(clips) != len(rows):
+        errors.append(f"時間軸檔有 {len(clips)} 段，鏡頭表有 {len(rows)} 鏡（要一鏡一段、順序一樣）")
+    board = {b.get("鏡號"): b for b in boards}
+    for i, (c, r) in enumerate(zip(clips, rows), 1):
+        c, s = (c if isinstance(c, dict) else {}), r.get("鏡號", "")
+        if c.get("label") != s:
+            errors.append(f"時間軸檔第 {i} 段的 label 是「{c.get('label') or '沒寫'}」，鏡頭表第 {i} 鏡是 {s}（順序要一樣）")
+            continue
+        want_img = canon_path(root, board[s]["分鏡參考圖"]) if s in board and board[s].get("分鏡參考圖") else None
+        if not c.get("image") or canon_path(root, str(c["image"])) != want_img:
+            errors.append(f"時間軸檔 {s} 用的圖是 {c.get('image') or '沒寫'}，分鏡參考圖表是 {want_img or '沒登記'}")
+        try:
+            want_sec, got_sec = float(r.get("秒數", "")), float(c.get("seconds"))
+        except (TypeError, ValueError):
+            errors.append(f"{s} 的秒數讀不出數字（鏡頭表「{r.get('秒數')}」、時間軸檔「{c.get('seconds')}」）")
+            continue
+        if round(want_sec * fps) != round(got_sec * fps):
+            errors.append(f"時間軸檔 {s} 是 {got_sec:g} 秒，鏡頭表是 {want_sec:g} 秒")
+    return errors
+
+
 def validate_lock_prerequisites(root, animatic, manifest):
     """Final Shot Lock 的前置（2-分鏡.md §12），全部從 2-分鏡.md 和鏡頭表讀，工單不當依據：
     關卡紀錄表 G3A＝LOCKED、G4C＝PASS、G5C＝PASS 而且依據就是這次要鎖的 Animatic 和時間軸檔；
     要進製作的鏡引用到的資產都核可、檔案在；用到的音色都核可、核可檔找得到；每鏡在分鏡參考圖表正好一列、參考圖核可、三項檢查都過；
     衍生欄位和正本一致（鏡頭表「參考圖」＝素材的資產 ID、素材的 Voice ID＝音色資產表在這一鏡出聲的、§10 首幀策略＝鏡頭表首幀來源）；
-    三個指紋算得出來。回傳錯誤清單，有任何一項就不能鎖"""
+    時間軸檔和鏡頭表一鏡一段、順序、圖、秒數都對得上；三個指紋算得出來。回傳錯誤清單，有任何一項就不能鎖"""
     animatic, manifest = canon_path(root, animatic), canon_path(root, manifest)
     errors = [f"找不到{what}：{p}" for p, what in ((animatic, "核可的 Animatic"), (manifest, "它的時間軸檔"))
               if not os.path.isfile(_abs(root, p))]
@@ -381,6 +410,7 @@ def validate_lock_prerequisites(root, animatic, manifest):
         if any(s in ids for s, _ in v["uses"]):
             if v["status"] != "核可":
                 errors.append(f"音色 {v['id']} 狀態是「{v['status'] or '沒寫'}」，要是核可")
+    errors += _animatic_vs_table(root, manifest, rows, boards)
     fp, e = fingerprints(root, manifest)
     return errors + [x for x in e if x not in errors]
 
@@ -450,16 +480,17 @@ def validate_exception(gate, exc_id, shot, profile, used):
 
 
 def parse_generation(text):
-    """分鏡卡「生成」那一行：不拆段＝{"": {"mode", "frames"}}；拆段寫「A 段 …；B 段 …」，B 段沒寫模式就跟 A 段一樣，幀數兩段都要寫。
-    模式：Ref2VA／參考模式＝ref，I2VA／FL2VA＝i2v；幀數＝「N 幀」（「第 N 幀」不算）。回傳（{段: …}, 錯誤）"""
+    """分鏡卡「生成」那一行：不拆段＝{"": {"mode", "frames"}}；拆段寫「A 段 …；B 段 …」，B 段沒寫模式就跟 A 段一樣，幀數兩段都要寫，
+    B 段還要寫「首幀＝A 第 N 格」（first）。模式：Ref2VA／參考模式＝ref，I2VA／FL2VA＝i2v；幀數＝「N 幀」（「第 N 幀」不算）。回傳（{段: …}, 錯誤）"""
     parts = re.split(r"(?:^|[；;\s])([AB])\s*段", text)
     segs = {"": parts[0]} if len(parts) == 1 else {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
     out, errors = {}, []
     for name, t in segs.items():
         t = t.split("成片取")[0]
         frames = re.search(r"(?<![第\d])(?<!第 )(\d+)\s*幀", t)
+        first = re.search(r"首幀\s*[＝=]\s*A\s*(?:段)?\s*第\s*(\d+)\s*格", t)
         out[name] = {"mode": "i2v" if re.search(r"I2VA|FL2VA", t) else "ref" if re.search(r"Ref2VA|參考模式", t) else None,
-                     "frames": int(frames.group(1)) if frames else None}
+                     "frames": int(frames.group(1)) if frames else None, "first": int(first.group(1)) if first else None}
     if "B" in out and out["B"]["mode"] is None:
         out["B"]["mode"] = out.get("A", {}).get("mode")
     for name, s in out.items():
@@ -468,42 +499,142 @@ def parse_generation(text):
             errors.append(f"{where}讀不出模式（Ref2VA／參考模式／I2VA）")
         if s["frames"] is None:
             errors.append(f"{where}讀不出幀數（寫成「N 幀」）")
+        if name == "B" and s["first"] is None:
+            errors.append("B 段讀不出「首幀＝A 第 N 格」")
     return out, errors
 
 
+def parse_first_source(src):
+    """鏡頭表「首幀來源」：接力 S03 末格／借 S08 第 0 格（來源鏡有拆段可加段：接力 S03 B 段末格）／合成／無。
+    回傳（策略, 來源鏡, 來源段或 None, 格；末格＝−1）；合成、無的後三項是 None；看不懂回傳 None"""
+    s = (src or "").strip()
+    for key, strategy in STRATEGIES:
+        if s.startswith(key):
+            if strategy in ("composite", "none"):
+                return strategy, None, None, None
+            m = re.fullmatch(re.escape(key) + r"\s*(\S+?)\s*(?:([AB])\s*段)?\s*(?:(末格)|第\s*(\d+)\s*格)", s)
+            if not m:
+                return None
+            return strategy, m.group(1), m.group(2), -1 if m.group(3) else int(m.group(4))
+    return None
+
+
+def _segments(cards, shot):
+    """這一鏡分鏡卡「生成」那一行解析出的段。回傳（{段: …}, 錯誤）"""
+    gen = re.search(r"^生成[：:](.*(?:\n(?:\s|[AB]\s*段|成片取).*)*)", cards.get(shot, ""), re.M)
+    if gen is None:
+        return {}, ["分鏡卡找不到「生成：」那一行"]
+    return parse_generation(gen.group(1))
+
+
+def _ledger_job(root, job_id):
+    """佇列帳本裡的一條（_腳本/佇列/編號.json）；沒有就 None"""
+    path = os.path.join(root, "_腳本", "佇列", f"{job_id}.json")
+    return json.loads(_text(path)) if os.path.isfile(path) else None
+
+
+def run_lint(path, text, facts):
+    """提示詞 lint：設定的外部版本存在就用它（命令列同 3-提示詞.md §5：提示詞檔、--refs 掛進去的參考圖檔名（去掉副檔名，照接入順序）、--frames；
+    離開碼 1＝有 ❌），不在就用內附的 h3_prompt_lint。排進來和送出前都走這裡。回傳 ❌ 清單"""
+    refs = facts["refs"] if facts["mode"] == "ref" else facts["images"]
+    names = [os.path.splitext(os.path.basename(n))[0] for _, n in refs if n]
+    ext = comfy.CFG.get("lint")
+    if ext and os.path.isfile(ext):
+        cmd = [sys.executable, ext, path, "--frames", str(facts["frames"])] + (["--refs", ",".join(names)] if names else [])
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if p.returncode == 0:
+            return []
+        lines = [l for l in (p.stdout + p.stderr).splitlines() if l.strip()]
+        return [f"外部 lint {os.path.basename(ext)} 離開碼 {p.returncode}：{lines[-1] if lines else '沒有輸出'}"]
+    errors, _ = h3_prompt_lint.lint(text, n_refs=facts["n_refs"], ref_names=tuple(names), frames=facts["frames"])
+    return errors
+
+
 def shot_plan(root, shot):
-    """鎖定的計畫裡這一鏡怎麼生成：首幀策略（鏡頭表「首幀來源」）、每一段的模式和幀數（分鏡卡「生成」）、
-    素材（資產 ID 和 Voice ID，照接入順序）。回傳（計畫或 None, [(代碼, 說明)]）"""
+    """鎖定的計畫裡這一鏡怎麼生成：首幀策略和來源（鏡頭表「首幀來源」）、每一段的模式、幀數和 B 段的接點（分鏡卡「生成」）、合成鏡的首幀檔（§10）、
+    素材（資產 ID 和 Voice ID，照接入順序）和每個資產現在的狀態。回傳（計畫或 None, [(代碼, 說明)]）"""
     rows = read_shot_table(root)
     row = next((r for r in rows if r.get("鏡號") == shot), None)
     if row is None:
         return None, [("SHOT_NOT_IN_PLAN", f"鎖定的鏡頭表裡沒有 {shot}")]
-    src = row.get("首幀來源")
-    strategy = next((v for k, v in STRATEGIES if (src or "").startswith(k)), None)
-    if strategy is None:
-        return None, [("PLAN_UNREADABLE", f"{shot} 的首幀來源「{src}」看不懂（接力／借／合成／無）")]
+    src = parse_first_source(row.get("首幀來源"))
+    if src is None:
+        return None, [("PLAN_UNREADABLE", f"{shot} 的首幀來源「{row.get('首幀來源')}」看不懂（接力 S01 末格／借 S08 第 0 格／合成／無）")]
+    strategy, src_shot, src_seg, src_frame = src
     md = _text(os.path.join(root, "2-分鏡.md"))
     cards, _ = find_cards(md, [r.get("鏡號", "") for r in rows])
-    gen = re.search(r"^生成[：:](.*(?:\n(?:\s|[AB]\s*段|成片取).*)*)", cards.get(shot, ""), re.M)
-    if gen is None:
-        return None, [("PLAN_UNREADABLE", f"{shot} 的分鏡卡找不到「生成：」那一行")]
-    segs, errors = parse_generation(gen.group(1))
+    segs, errors = _segments(cards, shot)
     if errors:
         return None, [("PLAN_UNREADABLE", f"{shot} 的{e}") for e in errors]
+    if src_shot and src_seg is None:   # 來源鏡有拆段、首幀來源沒寫段：末格是 B 段的，第 N 格是 A 段的
+        src_seg = ("B" if src_frame == -1 else "A") if "B" in _segments(cards, src_shot)[0] else ""
+    board = next((b for b in _board_rows(md) or [] if b.get("鏡號") == shot), {})
     assets, _ = asset_table(root, md)
     voices, errors = voice_table(root, md)
     if errors:
         return None, [("PLAN_UNREADABLE", e) for e in errors]
     visual, vids, _ = split_materials(card_materials(cards[shot]) or [], assets, {v["id"] for v in voices})
-    return {"shot": shot, "strategy": strategy, "segments": segs, "assets": [(a, assets[a]["file"]) for a in visual],
+    return {"shot": shot, "strategy": strategy, "source": (src_shot, src_seg, src_frame),
+            "first_file": canon_path(root, board["首幀檔"]) if board.get("首幀檔") else None,
+            "segments": segs, "assets": [(a, assets[a]["file"]) for a in visual], "asset_status": {a: assets[a]["status"] for a in visual},
             "approved_assets": {sha: a for a, x in assets.items() if x["status"] == "核可" for sha in [_sha_if_file(root, x["file"])] if sha},
             "voices": vids, "need_voices": [v["id"] for v in voices if (shot, "出聲") in v["uses"]],
             "voice_sha": {v["id"]: v["sha"] for v in voices},
             "approved_voices": {v["sha"]: v["id"] for v in voices if v["sha"] and v["status"] == "核可"}}, []
 
 
-def _match_plan(root, plan, facts, seg, input_dir):
-    """節點圖和鎖定的計畫比：拆段、模式、幀數、首幀；參考圖照素材的資產 ID 和順序（釘幀的圖另算，不比）；音色照音色資產表"""
+def _planned_first(plan, seg):
+    """這一段的首幀照鎖定的計畫該從哪裡來：("relay", 來源鏡, 來源段, 格)、("file", §10 的首幀檔) 或 ("none",)"""
+    if seg == "B":
+        return ("relay", plan["shot"], "A", plan["segments"]["B"]["first"])
+    if plan["strategy"] in ("relay", "borrow"):
+        return ("relay",) + plan["source"]
+    if plan["strategy"] == "composite":
+        return ("file", plan["first_file"])
+    return ("none",)
+
+
+def _where(shot, seg, frame):
+    return f"{shot}{f' {seg} 段' if seg else ''}{'末格' if frame == -1 else f'第 {frame} 格'}"
+
+
+def _match_first_frame(root, plan, facts, seg, input_dir, after, src_job):
+    """首幀照計畫：該接力的要有 after，接的是計畫寫的那一鏡（段）那一格；合成的釘 §10 的首幀檔（比內容）；「無」不釘也不接。
+    換圖節點＝釘首幀的節點、送出前釘的就是取到的那一格，在 validate_shot_preflight 對每一條（含例外）都檢查"""
+    want, first = _planned_first(plan, seg), facts["first_frame"]
+    if want[0] == "none":
+        fails = [("FIRST_FRAME_UNEXPECTED", "首幀策略是「無」，節點圖卻釘了首幀")] if first is not None else []
+        return fails + ([("RELAY_SOURCE_MISMATCH", "首幀策略是「無」，不接力，卻給了 after")] if after else [])
+    if first is None:
+        return [("FIRST_FRAME_MISSING", "這一鏡要首幀（首幀策略或 B 段），節點圖沒有釘首幀")]
+    if want[0] == "file":
+        if after:
+            return [("RELAY_SOURCE_MISMATCH", "首幀策略是「合成」，不接力，卻給了 after")]
+        if not want[1] or not os.path.isfile(_abs(root, want[1])):
+            return [("PLAN_UNREADABLE", f"{plan['shot']} 的首幀策略是合成，分鏡參考圖表的「首幀檔」要是找得到的檔案（現在是 {want[1] or '沒寫'}）")]
+        name = dict(facts["images"]).get(first)
+        sha = _sha_if_file(input_dir, name) if name else None
+        if sha and sha != file_sha(_abs(root, want[1])):
+            return [("FIRST_FRAME_MISMATCH", f"釘的首幀不是分鏡參考圖表的首幀檔 {want[1]}（比內容）")]
+        return []
+    _, s_shot, s_seg, s_frame = want
+    if not after:
+        return [("RELAY_REQUIRED", f"這一鏡的首幀要接 {_where(s_shot, s_seg, s_frame)}，要用佇列的 after")]
+    fails = []
+    if src_job is None:
+        fails.append(("RELAY_SOURCE_MISMATCH", f"帳本裡找不到 after 的前一條 {after[0]}"))
+    else:
+        m = src_job.get("meta", {})
+        got = (m.get("鏡"), m.get("段") or "")
+        if got != (s_shot, s_seg or ""):
+            fails.append(("RELAY_SOURCE_MISMATCH", f"計畫要接 {_where(s_shot, s_seg, s_frame)}，after 的前一條 {after[0]} 是 {got[0] or '不是 H3 鏡'}{f' {got[1]} 段' if got[1] else ''}"))
+    if after[1] != s_frame:
+        fails.append(("RELAY_SOURCE_MISMATCH", f"計畫取{'末格' if s_frame == -1 else f'第 {s_frame} 格'}，after 取的是{'末格' if after[1] == -1 else f'第 {after[1]} 格'}"))
+    return fails
+
+
+def _match_plan(root, plan, facts, seg, input_dir, after, src_job):
+    """節點圖和鎖定的計畫比：拆段、模式、幀數、首幀來源；參考圖照素材的資產 ID 和順序（釘幀的圖另算）、每個資產現在都要是核可；音色照音色資產表"""
     segs = plan["segments"]
     if seg not in segs:
         want = "、".join(f"{s} 段" for s in segs if s) or "不拆段"
@@ -514,11 +645,10 @@ def _match_plan(root, plan, facts, seg, input_dir):
         fails.append(("MODE_MISMATCH", f"鎖定的是 {names[s['mode']]}，節點圖是 {names[facts['mode']]}"))
     if s["frames"] != facts["frames"]:
         fails.append(("FRAMES_MISMATCH", f"鎖定的是 {s['frames']} 幀，節點圖是 {facts['frames']} 幀"))
-    need_first = seg == "B" or plan["strategy"] != "none"
-    if need_first and facts["first_frame"] is None:
-        fails.append(("FIRST_FRAME_MISSING", "這一鏡要首幀（首幀策略或 B 段），節點圖沒有釘首幀"))
-    if not need_first and facts["first_frame"] is not None:
-        fails.append(("FIRST_FRAME_UNEXPECTED", "首幀策略是「無」，節點圖卻釘了首幀"))
+    fails += _match_first_frame(root, plan, facts, seg, input_dir, after, src_job)
+    for a, _ in plan["assets"]:
+        if plan["asset_status"].get(a) != "核可":
+            fails.append(("ASSET_UNAPPROVED", f"資產 {a} 現在的狀態是「{plan['asset_status'].get(a) or '沒寫'}」，要是核可"))
 
     def shas(refs):
         """掛的檔的內容；不是直接讀檔的節點算空字串（對不上任何核可檔）；檔不在的 REF_MISSING 已經報過，不重複算"""
@@ -553,10 +683,10 @@ def _match_plan(root, plan, facts, seg, input_dir):
     return fails
 
 
-def validate_shot_preflight(facts, meta, stage, root=comfy.PROJ, input_dir=comfy.INP, relay_node=None, relay_frame=None, job=None):
+def validate_shot_preflight(facts, meta, stage, root=comfy.PROJ, input_dir=comfy.INP, after=None, relay_frame=None, job=None):
     """H3 影片的送件前檢查（4-生成與驗片.md §1）。佇列在排進來（stage="add"）和真的送到 ComfyUI 前（stage="dispatch"）各跑一次。
     facts＝comfy.h3_video_facts(節點圖)；meta＝送件時的 {"鏡", "提示詞", "段", "例外"}；
-    relay_node＝接力要換圖的 LoadImage 節點（after 的第三項），relay_frame＝接力取到的那一格（送出前才有）；job＝佇列條目編號。
+    after＝佇列的 (前一條, 第幾格, 要換圖的 LoadImage 節點)，接力、借格、B 段一定要有；relay_frame＝接力取到的那一格（送出前才有）；job＝佇列條目編號。
     送出前那一次（stage="dispatch"、有 job）過了，才發一次性的通行證 permit（綁專案、條目、節點圖），comfy._post 只認它。
     回傳 {"ok", "reasons", "messages", "message", "graph", "exception", "stage"(, "permit")}：reasons 是機器讀的代碼，message 給人看。"""
     fails = []
@@ -583,22 +713,31 @@ def validate_shot_preflight(facts, meta, stage, root=comfy.PROJ, input_dir=comfy
         text = _text(path)
         if _canon_text(text) != _canon_text(facts["prompt"].replace("\r\n", "\n")):
             fails.append(("PROMPT_MISMATCH", f"節點圖裡的提示詞和 {prompt} 不一樣"))
-        errors, _ = h3_prompt_lint.lint(text, n_refs=facts["n_refs"], frames=facts["frames"])
+        errors = run_lint(path, text, facts)
         if errors:
             fails.append(("LINT_FAIL", f"{prompt} 的 lint 有 {len(errors)} 個 ❌：{errors[0]}"))
     # 4. 要掛的圖和聲音都在 ComfyUI input（接力的那一格排進來時還沒取，送出前再看）
+    relay_node = after[2] if after else None
     for node, name in facts["images"] + facts["audios"]:
         if name and not (stage == "add" and node == relay_node) and not os.path.isfile(os.path.join(input_dir, name)):
             fails.append(("REF_MISSING", f"ComfyUI input 裡沒有 {name}"))
-    # 7. 接力、借格：after 取到那一格（cut 檢查過或人 release）才送
-    if relay_node and stage == "dispatch" and not (relay_frame and os.path.isfile(relay_frame)):
-        fails.append(("RELAY_UNRESOLVED", "接力的那一格還沒取到"))
+    # 7. 給了 after：換圖的節點要是釘首幀的節點；送出前要取到那一格（cut 檢查過或人 release），而且釘的就是它。例外也一樣
+    if after:
+        if relay_node != facts["first_frame"]:
+            fails.append(("RELAY_SOURCE_MISMATCH", f"after 要換圖的節點 {relay_node} 不是釘首幀的節點（{facts['first_frame'] or '沒釘首幀'}）"))
+        if stage == "dispatch":
+            if not (relay_frame and os.path.isfile(relay_frame)):
+                fails.append(("RELAY_UNRESOLVED", "接力的那一格還沒取到"))
+            else:
+                name = dict(facts["images"]).get(relay_node)
+                if not name or _sha_if_file(input_dir, name) != file_sha(relay_frame):
+                    fails.append(("FIRST_FRAME_MISMATCH", "釘的首幀不是接力取到的那一格（比內容）"))
     # 5、6、8–10. 照鎖定的計畫比（關卡過了才比；例外是計畫以外的測試，不比計畫）
     if shot and not exc_id and r["ok"]:
         plan, errors = shot_plan(root, shot)
         fails += errors
         if plan:
-            fails += _match_plan(root, plan, facts, seg, input_dir)
+            fails += _match_plan(root, plan, facts, seg, input_dir, after, _ledger_job(root, after[0]) if after else None)
     res = _result(fails, graph=facts["key"], exception=exc_id, stage=stage)
     if res["ok"] and stage == "dispatch" and job:
         res["permit"] = comfy._issue_permit(job, facts["key"])

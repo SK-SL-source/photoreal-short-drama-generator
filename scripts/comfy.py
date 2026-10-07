@@ -98,8 +98,8 @@ def _linked(graph, inp, prefix, field, cls):
 
 def h3_video_facts(graph):
     """H3 影片（h3_ref、h3_i2v）送件前檢查要看的事實；不是 H3 影片就回傳 None（Qwen 圖、只解音訊的 h3_voice、h3_vo 都不是）。
-    images＝所有 LoadImage；visual_refs＝照 ref_image_N 順序接進參考的圖，扣掉釘幀用的（首幀、尾幀、片中引導是執行中的檔，不是鎖定的資產）；
-    audios＝照 ref_audio_N 順序接進參考的音色。這兩個順序就是提示詞 <Picture N>、<Audio N> 的 N"""
+    images＝所有 LoadImage；refs＝照 ref_image_N 順序接進參考的全部圖（lint 的 --refs 用）；visual_refs＝refs 扣掉釘幀用的（首幀、尾幀、片中引導是執行中的檔，不是鎖定的資產）；
+    audios＝照 ref_audio_N 順序接進參考的音色。refs 和 audios 的順序就是提示詞 <Picture N>、<Audio N> 的 N"""
     gen = next((n for n in graph.values() if n["class_type"] in H3_GENERATE), None)
     if gen is None or not any(n["class_type"] in VIDEO_OUTPUT for n in graph.values()):
         return None
@@ -119,7 +119,7 @@ def h3_video_facts(graph):
     refs = _linked(graph, inp, "ref_images.", "image", "LoadImage")
     return {"key": hashlib.sha256(json.dumps(graph, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest(),
             "mode": mode, "profile": profile, "frames": inp["length"], "prompt": inp["prompt"], "first_frame": first,
-            "images": images, "visual_refs": [r for r in refs if r[0] not in guided],
+            "images": images, "refs": refs, "visual_refs": [r for r in refs if r[0] not in guided],
             "audios": _linked(graph, inp, "ref_audios.", "audio", "LoadAudio"),
             "n_refs": len(refs) if mode == "ref" else len(images)}
 
