@@ -327,7 +327,8 @@ def fingerprints(root, manifest):
 
 def _animatic_vs_table(root, manifest, rows, boards):
     """G5C 核可的時間軸檔要和鏡頭表一致：一鏡一段、label＝鏡號、順序同鏡頭表、image＝§10 那一鏡的分鏡參考圖、seconds＝鏡頭表的秒數
-    （換成影格比，fps 照時間軸檔、預設 24）。漏鏡、多鏡、順序錯、錯圖、秒數不同都回報；時間軸檔讀不了交給 fingerprints 報"""
+    （換成影格比，fps 照時間軸檔、預設 24）、不變速也不交叉淡化（speed 省略或 1、xfade 省略或 0，不然每段時長和下一段的起點會偏離鏡頭表）。
+    漏鏡、多鏡、順序錯、錯圖、秒數不同、變速、淡化都回報；時間軸檔讀不了交給 fingerprints 報"""
     try:
         cfg = json.loads(_text(_abs(root, manifest)))
     except (FileNotFoundError, ValueError):
@@ -346,9 +347,12 @@ def _animatic_vs_table(root, manifest, rows, boards):
             errors.append(f"時間軸檔 {s} 用的圖是 {c.get('image') or '沒寫'}，分鏡參考圖表是 {want_img or '沒登記'}")
         try:
             want_sec, got_sec = float(r.get("秒數", "")), float(c.get("seconds"))
+            speed, xfade = float(c.get("speed", 1)), float(c.get("xfade", 0))
         except (TypeError, ValueError):
-            errors.append(f"{s} 的秒數讀不出數字（鏡頭表「{r.get('秒數')}」、時間軸檔「{c.get('seconds')}」）")
+            errors.append(f"{s} 的秒數讀不出數字（鏡頭表「{r.get('秒數')}」、時間軸檔 seconds「{c.get('seconds')}」、speed「{c.get('speed')}」、xfade「{c.get('xfade')}」）")
             continue
+        if speed != 1 or xfade != 0:
+            errors.append(f"時間軸檔 {s} 有 speed {speed:g}／xfade {xfade:g}：Animatic 只用硬切、不變速（§11），這段的時長和下一段的起點會和鏡頭表對不上")
         if round(want_sec * fps) != round(got_sec * fps):
             errors.append(f"時間軸檔 {s} 是 {got_sec:g} 秒，鏡頭表是 {want_sec:g} 秒")
     return errors
