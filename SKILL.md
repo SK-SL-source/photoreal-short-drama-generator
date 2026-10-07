@@ -90,7 +90,7 @@ Follow `references/2A-分鏡敘事.md` to decide which shots to make and what ea
 
 ## Station 3: Prompts
 
-Follow `references/3-提示詞.md` once G5D is locked: route each shot to an H3 mode, compile the prompt from its card, lint it, show two prompts for a spot check, then the generation authorization card (G6).
+Follow `references/3-提示詞.md` once G5D is locked: route each shot to an H3 mode, compile the prompt from its card, lint it, paste two prompts in full for the spot check (all six sections of both prompts, in the reply itself; a file name or a summary is not a spot check) so the user can compare them with the cards for anything the card does not say, then the generation authorization card (G6).
 
 ## Station 4: Generate and review
 
