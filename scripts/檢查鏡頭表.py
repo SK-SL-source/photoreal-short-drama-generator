@@ -1,7 +1,9 @@
 # 檢查鏡頭表.py — 用法：python 檢查鏡頭表.py 2-鏡頭表.csv
-# 檢查項目：秒數範圍、台詞會不會講不完、連戲三欄有沒有填、參考圖有沒有指定（照 references/規則核心.md §2、§3）；
+# 檢查項目：秒數、台詞會不會講不完、連戲三欄有沒有填、參考圖有沒有指定（照 references/規則核心.md §2、§3）；
 # 旁邊有 2-分鏡.md 時再照分鏡卡「生成」那一行核對：成片秒數 ≤ 生成幀數÷24、成片取在生成長度裡且合計＝秒數、台詞窗在成片取裡
 # （2-分鏡.md §4、§5；第三方測試 QA-10：141 幀寫 6 秒沒人抓到）。
+# 成片秒數沒有規則下限（規則核心 §2.2 只限制生成長度：最短 124 幀、最長看 max_frames），台詞字數上限也是對生成片長（§2.4），
+# 所以有分鏡卡就照卡上的生成幀數核對；還沒有卡只能用成片秒估，估的只給 ⚠️。
 # 回報全部用白話。❌ = 一定要修；⚠️ = 看過確認就好。
 
 import os, sys, csv, re
@@ -10,7 +12,7 @@ import 檢查量產Gate as gate   # 分鏡卡「生成」「成片取」「台�
 
 sys.stdout.reconfigure(encoding="utf-8")  # Windows 中文輸出必加
 
-SEC_MIN, SEC_MAX = 4, CFG["max_frames"] / 24   # 每鏡秒數範圍；最長＝這台機器量過的單鏡上限
+SEC_MAX = CFG["max_frames"] / 24   # 單次生成的上限（這台機器量過的）；成片秒數本身沒有下限，只要大於 0
 
 def 台詞上限(秒):
     # 規則核心 §2.4：字數 ≤ 4.2×（秒−2.3）。加 0.05 吸收秒數四捨五入的誤差，
@@ -55,11 +57,35 @@ def 分鏡卡檢查(鏡, 秒, card):
     return 問題
 
 
+_角色名 = r"[^：:。！？!?；;\n｜|]{1,12}[：:]"   # 「角色名：」——和 檢查量產Gate.dialogue_lines 同樣最多 12 字
+
+
 def 台詞字數(text):
-    # 只數實際會唸出來的字（去掉角色名、冒號、標點、空白）
-    t = re.sub(r"^[^:：]*[:：]", "", text)          # 去掉「角色名:」這種前綴
-    t = re.sub(r"[，。！？、,.!?…；;「」『』()（）\s]", "", t)
-    return len(t)
+    # 只數實際會唸出來的字：換行或「｜」分句（和送件前檢查同一套），每句去掉開頭的「角色名：」；
+    # 同一句裡在句號後又出現的第二個「角色名：」（兩人寫在同一格、沒分句）也去掉，角色名和冒號都不算字
+    n = 0
+    for piece in re.split(r"[\n｜|]", text or ""):
+        piece = re.sub(r"^\s*" + _角色名 + r"\s*", "", piece.strip())
+        piece = re.sub(r"(?<=[。！？!?；;])\s*" + _角色名 + r"\s*", "", piece)
+        n += len(re.sub(r"[，。！？、,.!?…；;「」『』()（）\s]", "", piece))
+    return n
+
+
+def 同格兩人沒分句(text):
+    # 同一句（沒換行、沒「｜」）裡出現兩個以上「角色名：」：鎖定後送件前檢查會把整句當一句台詞比對，提示詞的 <d> 會對不上
+    for piece in re.split(r"[\n｜|]", text or ""):
+        if len(re.findall(r"(?:^|(?<=[。！？!?；;]))\s*" + _角色名, piece.strip())) >= 2:
+            return True
+    return False
+
+
+def 生成幀數(card):
+    # 分鏡卡「生成」那一行的幀數合計（拆段相加）；沒有那一行或寫法有錯回 None（錯誤由 分鏡卡檢查 回報）
+    gen = gate.card_generation(card)
+    if gen is None:
+        return None
+    segs, errs = gate.parse_generation(gen)
+    return None if errs else sum(s["frames"] for s in segs.values())
 
 def main(path):
     問題 = []
@@ -84,21 +110,34 @@ def main(path):
         except ValueError:
             問題.append(f"❌ {鏡}：秒數沒填或不是數字。")
             continue
-        if not (SEC_MIN <= 秒 <= SEC_MAX):
-            問題.append(f"❌ {鏡}：{秒:g} 秒超出範圍（每鏡要在 {SEC_MIN}–{SEC_MAX:.2f} 秒之間）。")
+        if 秒 <= 0:
+            問題.append(f"❌ {鏡}：秒數要大於 0。")
+            continue
+        if cards is None and 秒 > SEC_MAX + TOL:
+            問題.append(f"⚠️ {鏡}：{秒:g} 秒超過單次生成的上限 {SEC_MAX:.2f} 秒（{CFG['max_frames']} 幀）——不拆段做不到；"
+                        f"G4B 分鏡卡寫完再跑一次，照卡上的生成幀數核對。")
         if cards is not None:
             if 鏡 not in cards:
                 問題.append(f"❌ {鏡}：2-分鏡.md 找不到分鏡卡（要有一行以「{鏡}｜」開頭）。")
             else:
                 問題 += 分鏡卡檢查(鏡, 秒, cards[鏡])
-        # 2) 台詞講不講得完
+        # 2) 台詞講不講得完：規則核心 §2.4 算的是生成片長，所以有分鏡卡就用卡上的生成幀數；沒有卡只能用成片秒估
         台詞 = (r.get("台詞(逐字)") or r.get("台詞") or "").strip()
         if 台詞:
             字數 = 台詞字數(台詞)
-            上限 = 台詞上限(秒)
-            if 字數 > 上限:
-                問題.append(f"❌ {鏡}：台詞 {字數} 字，但 {秒:g} 秒最多 {上限} 字（規則核心 §2.4）"
-                            f" → 改短台詞，或把這鏡拆成兩鏡。")
+            幀 = 生成幀數(cards[鏡]) if cards is not None and 鏡 in cards else None
+            if 幀 is not None:
+                上限 = 台詞上限(幀 / 24)
+                if 字數 > 上限:
+                    問題.append(f"❌ {鏡}：台詞 {字數} 字，但分鏡卡生成 {幀} 幀（{幀 / 24:.2f} 秒）最多 {上限} 字（規則核心 §2.4）"
+                                f" → 改短台詞、加幀數，或把這鏡拆成兩鏡。")
+            else:
+                上限 = 台詞上限(秒)
+                if 字數 > 上限:
+                    問題.append(f"⚠️ {鏡}：台詞 {字數} 字，用成片 {秒:g} 秒估最多 {上限} 字——規則核心 §2.4 算的是生成片長，"
+                                f"G4B 分鏡卡寫完再跑一次，照生成幀數核對。")
+            if 同格兩人沒分句(台詞):
+                問題.append(f"⚠️ {鏡}：同一格有兩個人的台詞但沒分句——一句一行或用「｜」隔開，鎖定後送件前檢查才對得上提示詞的 <d>。")
         # 3) 連戲三欄
         for 欄 in ["站位(誰左誰右)", "視線(看著什麼)", "手上道具"]:
             值 = (r.get(欄) or "").strip()
