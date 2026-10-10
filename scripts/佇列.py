@@ -169,17 +169,20 @@ def _relay(j, src, check=True):
 
 
 def advance():
-    """收完成的、送輪到的接力"""
-    q = json.load(urllib.request.urlopen(f"{comfy.BASE}/queue", timeout=15))
-    live = {x[1] for x in q["queue_running"] + q["queue_pending"]}
+    """收完成的、送輪到的接力。backend=local 才查 ComfyUI 的 /queue：拿不到就代表工作消失了（重開過？）；
+    backend=runpod 不用這個判斷——RunPod 的工作只有「還在跑」或「有終局狀態」兩種，不會憑空消失（見 comfy.history_entry）"""
+    live = None
+    if comfy.BACKEND != "runpod":
+        q = json.load(urllib.request.urlopen(f"{comfy.BASE}/queue", timeout=15))
+        live = {x[1] for x in q["queue_running"] + q["queue_pending"]}
     js = {j["id"]: j for j in jobs()}
     for j in js.values():
         if j["state"] != QUEUED:
             continue
-        h = json.load(urllib.request.urlopen(f"{comfy.BASE}/history/{j['prompt_id']}", timeout=15))
-        if j["prompt_id"] in h:
-            _finish(j, h[j["prompt_id"]])
-        elif j["prompt_id"] not in live:
+        entry = comfy.history_entry(j["prompt_id"])
+        if entry is not None:
+            _finish(j, entry)
+        elif live is not None and j["prompt_id"] not in live:
             j.update(state=FAILED, error="ComfyUI 的佇列和紀錄裡都找不到（重開過？）")
         else:
             continue
@@ -219,17 +222,25 @@ def status():
     if not js:
         print("帳本是空的")
         return
-    try:
-        q = json.load(urllib.request.urlopen(f"{comfy.BASE}/queue", timeout=15))
-        running = {x[1] for x in q["queue_running"]}
-        pending = [x[1] for x in sorted(q["queue_pending"], key=lambda x: x[0])]
-    except OSError:
-        print("連不上 ComfyUI，只顯示帳本")
-        running, pending = set(), []
+    if comfy.BACKEND == "runpod":
+        import rp
+        label = {"IN_QUEUE": "排在 RunPod", "IN_PROGRESS": "正在跑", "COMPLETED": "跑完了，等 wait 收"}
+        running = pending = None   # 不用下面本機那組，RunPod 的每條工作各自查狀態（見下面 note 的算法）
+    else:
+        try:
+            q = json.load(urllib.request.urlopen(f"{comfy.BASE}/queue", timeout=15))
+            running = {x[1] for x in q["queue_running"]}
+            pending = [x[1] for x in sorted(q["queue_pending"], key=lambda x: x[0])]
+        except OSError:
+            print("連不上 ComfyUI，只顯示帳本")
+            running, pending = set(), []
     for j in js:
         if j["state"] == QUEUED:
             pid = j["prompt_id"]
-            note = "正在跑" if pid in running else (f"排第 {pending.index(pid) + 1}" if pid in pending else "跑完了，等 wait 收")
+            if running is None:
+                note = label.get(rp.peek_status(pid), "？（查不到 RunPod 狀態）")
+            else:
+                note = "正在跑" if pid in running else (f"排第 {pending.index(pid) + 1}" if pid in pending else "跑完了，等 wait 收")
         elif j["state"] == WAIT:
             note = f"等 {j['after'][0]}"
         elif j["state"] == READY:
@@ -277,15 +288,10 @@ def release(ids):
 
 
 def cancel(ids):
-    q = json.load(urllib.request.urlopen(f"{comfy.BASE}/queue", timeout=15))
-    running = {x[1] for x in q["queue_running"]}
     for jid in ids:
         j = _load(jid)
         if j["state"] == QUEUED:
-            if j["prompt_id"] in running:
-                comfy._post("/interrupt", {"prompt_id": j["prompt_id"]})
-            else:
-                comfy._post("/queue", {"delete": [j["prompt_id"]]})
+            comfy.cancel(j["prompt_id"])
         if j["state"] in (WAIT, HOLD, READY, QUEUED):
             j["state"] = CANCELLED
             _save(j)

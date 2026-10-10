@@ -49,6 +49,7 @@ if CFG["ffmpeg"] == "ffmpeg" and not shutil.which("ffmpeg") and imageio_ffmpeg:
     except RuntimeError:   # 這個平台沒有附 ffmpeg：維持原設定，開工檢查會報 ❌ 並說明怎麼補
         pass
 M = CFG["models"]
+BACKEND = CFG.get("backend", "local")   # "local"＝本機 ComfyUI；"runpod"＝RunPod Serverless（見 scripts/rp.py、runpod/README.md）
 BASE = CFG["comfy_url"]
 OUT = os.path.join(CFG["comfy_dir"], "output")
 INP = os.path.join(CFG["comfy_dir"], "input")
@@ -125,6 +126,7 @@ def h3_video_facts(graph):
 
 
 _permits = {}   # 一次性通行證 {token: (專案, 佇列條目, 節點圖指紋)}：送出前檢查過了才發，用一次就作廢
+_rp_free_next = False   # backend=runpod：free() 設 True；下一個真的送出的工作帶 free_first，之後清成 False（見 free()、_post）
 
 
 def _issue_permit(job, key):
@@ -136,20 +138,88 @@ def _issue_permit(job, key):
 
 def _post(path, obj, permit=None, job=None):
     """送 H3 影片要帶 permit：佇列條目 job 剛過送出前檢查時發的一次性通行證，要和這個專案、這一條、這一張節點圖都對得上，用過就作廢。
-    檢查結果的 dict 本身不算數，所以 H3 影片只能經佇列送：comfy.run、直接送件、重播舊的通行證都送不出去"""
+    檢查結果的 dict 本身不算數，所以 H3 影片只能經佇列送：comfy.run、直接送件、重播舊的通行證都送不出去。
+    backend=runpod：/prompt 不送本機、改送 RunPod（見 rp.submit），回傳的 prompt_id 其實是 RunPod 的 job id，
+    之後 history_entry／佇列.advance 認的也是這個 id，不用管它本來是誰的號碼。"""
     if path == "/prompt":
         facts = h3_video_facts(obj["prompt"])
         if facts and (_permits.pop(permit, None) if isinstance(permit, str) else None) != (PROJ, job, facts["key"]):
             msg = "H3 影片要經佇列送（佇列.add，由 wait 送出）：送出前檢查過了才有一次性的通行證，comfy.run 和直接送件都不送 H3 影片"
             raise GateBlocked({"ok": False, "reasons": ["NO_PERMIT"], "messages": [msg], "message": msg})
+    if BACKEND == "runpod":
+        global _rp_free_next
+        import rp
+        if path == "/prompt":
+            free_first, _rp_free_next = _rp_free_next, False
+            pid = rp.submit(obj["prompt"], free_first=free_first)
+            return json.dumps({"prompt_id": pid}).encode("utf-8")
+        if path == "/free":
+            _rp_free_next = True
+            return b"{}"
+        raise NotImplementedError(f"backend=runpod 不支援 {path}")
     req = urllib.request.Request(BASE + path, data=json.dumps(obj).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
     return urllib.request.urlopen(req, timeout=60).read()
 
 
 def free():
-    """換模型家族前清顯存（佇列空的時候才呼叫）"""
+    """換模型家族前清顯存（佇列空的時候才呼叫）。backend=runpod 沒有常駐的伺服器可以「現在」清，
+    只能讓下一個真正送出的工作帶 free_first（那個 worker 剛好是熱的才有意義，冷的本來就沒載模型）"""
     _post("/free", {"unload_models": True, "free_memory": True})
+
+
+def cancel(pid):
+    """取消一個已經送出的工作（佇列.cancel 用；pid＝comfy._post 回的那個號碼，不是帳本的 job id）"""
+    if BACKEND == "runpod":
+        import rp
+        rp.cancel(pid)
+        return
+    try:
+        q = json.load(urllib.request.urlopen(f"{BASE}/queue", timeout=15))
+        if pid in {x[1] for x in q["queue_running"]}:
+            _post("/interrupt", {"prompt_id": pid})
+        else:
+            _post("/queue", {"delete": [pid]})
+    except Exception as e:
+        print(f"⚠️ 取消 {pid} 失敗：{e}")
+
+
+def history_entry(pid):
+    """這個 pid 目前的 /history 項目（還在跑就 None）。backend=local 直接問 ComfyUI；
+    backend=runpod 問 RunPod 的工作狀態（rp.get_result，結果會在本機快取一份，RunPod 的 30 分鐘過期不用管）"""
+    if BACKEND == "runpod":
+        import rp
+        return rp.get_result(pid)
+    try:
+        h = json.load(urllib.request.urlopen(f"{BASE}/history/{pid}", timeout=15))
+    except Exception:
+        return None
+    return h.get(pid)
+
+
+_OBJECT_INFO_CACHE = None
+
+
+def _object_info_cache():
+    global _OBJECT_INFO_CACHE
+    if _OBJECT_INFO_CACHE is None:
+        path = os.path.join(HERE, "object_info.runpod.json")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"{path}（backend=runpod 要先跑一次 python rp.py object_info，要先 python rp.py up 叫醒 worker）")
+        _OBJECT_INFO_CACHE = read_json(path)
+    return _OBJECT_INFO_CACHE
+
+
+def object_info(ct):
+    """跟 GET {BASE}/object_info/{ct} 一樣的形狀：{ct: {...}}，節點不存在就 {}。
+    backend=runpod 讀 rp.py object_info 存的快取，不是問真的在跑的伺服器（RunPod 沒有常駐、能直接問的 HTTP 伺服器）"""
+    if BACKEND == "runpod":
+        cache = _object_info_cache()
+        return {ct: cache[ct]} if ct in cache else {}
+    try:
+        return json.load(urllib.request.urlopen(f"{BASE}/object_info/{ct}", timeout=10))
+    except urllib.error.HTTPError:
+        return {}
 
 
 def log(rec):
@@ -187,20 +257,17 @@ def outputs(entry):
 
 
 def wait_for(job_id, pid, dests, timeout=3600, meta=None):
-    """等一個已經在 ComfyUI 佇列裡的工作（用 prompt_id）跑完，輸出依順序複製到 dests"""
+    """等一個已經送出的工作（用 prompt_id／RunPod job id）跑完，輸出依順序複製到 dests"""
     t0 = time.time()
     while time.time() - t0 < timeout:
-        try:
-            h = json.load(urllib.request.urlopen(f"{BASE}/history/{pid}", timeout=15))
-        except Exception:
-            h = {}
-        if pid in h:
+        entry = history_entry(pid)
+        if entry is not None:
             el = round(time.time() - t0)
-            st = h[pid].get("status", {})
+            st = entry.get("status", {})
             if st.get("status_str") != "success":
                 err = "gen error: " + json.dumps(st.get("messages", []), ensure_ascii=False)[-1500:]
                 log({"job": job_id, "prompt_id": pid, "error": err, "sec": el, **(meta or {})}); return [], err, el
-            files = outputs(h[pid])
+            files = outputs(entry)
             got = []
             for src, dst in zip(files, dests):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -413,9 +480,10 @@ def check_graph(g):
                     problems.append(f"#{nid} {node['class_type']}.{key} 指到不存在的節點 #{v[0]}")
     for ct in sorted({n["class_type"] for n in g.values()}):
         try:
-            info = json.load(urllib.request.urlopen(f"{BASE}/object_info/{ct}", timeout=10))[ct]
+            info = object_info(ct)[ct]
         except Exception as e:
-            problems.append(f"查不到 {ct} 的定義（ComfyUI 沒開？）：{e}")
+            hint = "ComfyUI 沒開？" if BACKEND != "runpod" else "先跑 python rp.py object_info 存快取？"
+            problems.append(f"查不到 {ct} 的定義（{hint}）：{e}")
             continue
         req, opt = info["input"].get("required", {}), info["input"].get("optional", {})
         n_out[ct] = len(info.get("output", []))

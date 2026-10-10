@@ -13,3 +13,7 @@ opencv-python
 # 系統沒有 ffmpeg 時才要裝：腳本會自動用它附的那一支
 # Only needed when there is no system ffmpeg; the scripts then use the one it bundles
 imageio-ffmpeg
+
+# 只有 設定.json 的 "backend":"runpod"（scripts/rp.py 傳輸層，見 runpod/README.md）要用，上傳/下載 Cloudflare R2
+# Only needed for "backend":"runpod" (scripts/rp.py, see runpod/README.md), to upload/download Cloudflare R2
+boto3

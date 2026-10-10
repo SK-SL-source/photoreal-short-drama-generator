@@ -1,6 +1,13 @@
 {
+  "backend": "local",
   "comfy_url": "http://127.0.0.1:8188",
   "comfy_dir": "",
+  "runpod": {
+    "endpoint_id": "",
+    "r2_bucket": "",
+    "r2_endpoint": "",
+    "rate_usd_per_hour": 0
+  },
   "python": "python",
   "ffmpeg": "ffmpeg",
   "max_frames": 294,
