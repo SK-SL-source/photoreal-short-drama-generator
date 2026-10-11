@@ -1,6 +1,6 @@
 """佇列帳本：一次排很多條、不用等它跑完；用 prompt_id 追進度，完成就把輸出複製回專案、記進 生成紀錄.jsonl。
 接力：等前一條完成，先檢查它有沒有片中切鏡或漏出參考圖（驗片量測 cut），沒問題才取它的一格當這一條的首幀送出。
-H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出前只查一條——meta 列的參考圖、音色、首幀都在專案 已核可/ 裡（references/5-生成.md §1），排進來先記「待送出」，由 wait 送出。
+H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出前只查一條——meta 列的參考圖、音色、首幀都在專案 已核可/ 裡（references/4-生成.md §1），排進來先記「待送出」，由 wait 送出。
 帳本在 _腳本\\佇列\\，一條一個檔；程式中斷了，重跑 wait 就接著做。
 
 送件腳本裡：
@@ -52,7 +52,7 @@ def _say(job):
 
 
 def _not_approved(job):
-    """送件前唯一的檢查（references/5-生成.md §1）：meta 的 refs、first_frame 列的每個檔都在專案 已核可/ 底下而且存在；
+    """送件前唯一的檢查（references/4-生成.md §1）：meta 的 refs、first_frame 列的每個檔都在專案 已核可/ 底下而且存在；
     數量要等於節點圖裡 LoadImage＋LoadAudio 的節點數（接力的首幀由佇列自己取格，不算）。回傳問題清單，空＝過"""
     meta, graph = job["meta"], job["graph"]
     relay = bool(job.get("after"))
@@ -139,7 +139,7 @@ def _finish(j, entry):
             shutil.copy2(src, dst)
             got.append(dst)
         j.update(state=DONE if got else FAILED, files=got, error=None if got else "沒有輸出")
-        if got and comfy.h3_video_facts(j["graph"]):   # H3 片段：完成就跑驗片包（5-生成.md §3），人看了才判定
+        if got and comfy.h3_video_facts(j["graph"]):   # H3 片段：完成就跑驗片包（4-生成.md §3），人看了才判定
             _review(j)
     comfy.log({"job": j["id"], "prompt_id": j["prompt_id"], "sec": j.get("sec"), "files": j.get("files"), "送出": comfy.graph_facts(j["graph"]),
                "error": j.get("error"), "cut": (j.get("review") or {}).get("cut"), "驗片包": (j.get("review") or {}).get("驗片包"),
@@ -147,7 +147,7 @@ def _finish(j, entry):
 
 
 def _review(j):
-    """H3 片段完成就跑驗片包（5-生成.md §3）：量測寫進 4-影片/驗片/片名/，cut 結果記進帳本和生成紀錄。
+    """H3 片段完成就跑驗片包（4-生成.md §3）：量測寫進 4-影片/驗片/片名/，cut 結果記進帳本和生成紀錄。
     這只是量測和草稿，判定還是人看過才寫；剪接.py 沒看到驗片包和核可狀態不出片（5-結案.md §5）。
     首幀：接力取到的那一格，或節點圖釘在第 0 幀的那張圖；都沒有就不比第 0 幀"""
     video = j["files"][0]

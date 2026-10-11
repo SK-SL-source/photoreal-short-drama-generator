@@ -80,7 +80,7 @@ def open_chrome_once(url=BASE):
 
 
 class GateBlocked(Exception):
-    """H3 影片沒過送件前檢查（references/5-生成.md §1）。result＝檢查結果：reasons 是機器讀的代碼，message 給人看"""
+    """H3 影片沒過送件前檢查（references/4-生成.md §1）。result＝檢查結果：reasons 是機器讀的代碼，message 給人看"""
     def __init__(self, result):
         super().__init__(result["message"])
         self.result = result

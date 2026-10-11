@@ -4,7 +4,7 @@
 
 **Claude Code Skill · MiniMax H3 · Qwen-Image 2.1 · ComfyUI · AI Filmmaking**
 
-在本機 ComfyUI 上，照五站把短劇劇本做成仿真人短劇的 Claude Code skill。畫風照你給的五張基準圖定死，卡片由母版編譯，每一鏡一張第 0 幀圖過檢查器，送件只掛你核可過的檔。
+在本機 ComfyUI 上，照五站把短劇劇本做成仿真人短劇的 Claude Code skill。「仿真人」是理想化、精修過的乾淨高級棚拍感，不是紀錄寫實。畫風照你給的五張基準圖定死，卡片由母版編譯，每一鏡一張第 0 幀圖過檢查器，送件只掛你核可過的檔。
 
 [English](#english)
 
@@ -36,7 +36,7 @@ Claude 照這個 skill 一站一站做；每一站做完整批交給你，你只
 | 片段（必要） | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `text_encoders` | 同上 |
 | 片段（必要） | `minimax_h3_video_vae_fp16.safetensors`、`minimax_h3_audio_vae_fp32.safetensors` | `vae` | 同上 |
 | 正式檔位加速 | `MiniMax-H3-Ref2VA-Acc-8Step.safetensors` | `pdd_acc` | [alibaba-pai/MiniMax-H3-Acc-LoRAs](https://huggingface.co/alibaba-pai/MiniMax-H3-Acc-LoRAs) |
-| 角色板、場景卡、第 0 幀（必要） | Qwen-Image 2.1 主模型的 GGUF 量化檔（檔名寫進設定的 `models.qwen_image`）；`qwen3vl_8b_int8_convrot.safetensors`；`qwen_image_2.1_vae_bf16.safetensors` | `diffusion_models`；`text_encoders`；`vae` | 自選；[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) |
+| 角色板、場景卡、第 0 幀（必要） | Qwen-Image 2.1 主模型的 GGUF 量化檔（實測用 Q4_K_M；結果跟量化等級有關，換檔要重驗；檔名寫進設定的 `models.qwen_image`）；`qwen3vl_8b_int8_convrot.safetensors`；`qwen_image_2.1_vae_bf16.safetensors` | `diffusion_models`；`text_encoders`；`vae` | 自選；[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) |
 | 生音色檔（選用） | `minimax_h3_fl2va_pruned_int8_convrot.safetensors` | `diffusion_models` | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) |
 | 配樂（選用） | `acestep_v1.5_turbo.safetensors`；`qwen_0.6b_ace15.safetensors`、`qwen_1.7b_ace15.safetensors`；`ace_1.5_vae.safetensors` | `diffusion_models`；`text_encoders`；`vae` | [Comfy-Org/ace_step_1.5](https://huggingface.co/Comfy-Org/ace_step_1.5) |
 
@@ -96,7 +96,7 @@ references/1-劇本.md          第 1 站
 references/2-資產.md          第 2 站：母版 spec、場景關係表、資產表
 references/3-分鏡.md          第 3 站：鏡頭表、分鏡卡、分鏡圖範本、參考圖規則、八項審圖表
 references/4-影片提示詞.md    第 4 站：H3 範本 A–D、景別詞表
-references/5-生成.md          第 4 站：佇列、驗片、失敗處理
+references/4-生成.md          第 4 站：佇列、驗片、失敗處理
 references/5-結案.md          第 5 站
 references/查表-H3句型.md     H3 官方格式與驗證過的句型（寫影片提示詞時翻）
 references/查表-圖像母版.md   角色板、場景卡母版的槽位、Gate、證據（寫 spec 時翻）
@@ -143,7 +143,7 @@ MIT，見 [LICENSE](LICENSE)。事件表、從敘事目的推鏡頭、連戲檢�
 
 ### What it does
 
-A Claude Code skill that turns a short-drama script into a photoreal episode on local ComfyUI (MiniMax H3 + Qwen-Image 2.1), one station at a time. Each station is delivered as a single batch; you reply only to the items that need changes, and silence means approved.
+A Claude Code skill that turns a short-drama script into a photoreal episode on local ComfyUI (MiniMax H3 + Qwen-Image 2.1), one station at a time. "Photoreal" here means an idealized, beauty-retouched, clean commercial-catalog look (a digital human), not documentary realism. Each station is delivered as a single batch; you reply only to the items that need changes, and silence means approved.
 
 1. **Script**: brief, story, final lines and the event table.
 2. **Art and assets**: character boards (beauty, a wardrobe system, a four-row layout) and scene cards (space, materials, palette, light state) compiled from fixed templates against your five reference images, gated before generation; plus scene relation tables and voices, shown beside the references in one comparison sheet.
