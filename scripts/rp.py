@@ -38,9 +38,12 @@ def _need_key():
 
 def _call(base, path, method="GET", body=None, timeout=60):
     _need_key()
+    # User-Agent 要像瀏覽器：CTRL host（api.runpod.io）在 Cloudflare 後面，urllib 預設那支常被當機器人擋掉（error 1010）
     req = urllib.request.Request(f"{base}/{path}", method=method,
                                  data=None if body is None else json.dumps(body).encode("utf-8"),
-                                 headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json",
+                                          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
