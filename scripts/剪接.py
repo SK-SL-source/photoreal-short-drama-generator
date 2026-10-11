@@ -1,5 +1,4 @@
 """第 5 站：剪接＋混音（ffmpeg）。依分鏡順序裁切片段、可單鏡加速、疊後製旁白、墊一條連續配樂（有人聲或音效時自動壓低），不上字幕。
-G5C Animatic 也用這支：分鏡參考圖照鏡頭表的秒數硬切接起來，疊上預覽語音（`2-分鏡.md` §11）。
 用法：python 剪接.py <剪接設定.json> [--dry-run]（例：粗剪_v1.json）；--dry-run 只印時間軸和每條語音在鏡內的起迄，不出片
 剪接設定：
 {
@@ -29,7 +28,7 @@ G5C Animatic 也用這支：分鏡參考圖照鏡頭表的秒數硬切接起來�
 """
 import csv, os, re, subprocess, sys
 from comfy import CFG, PROFILES, PROJ, need_file, read_json
-import 檢查量產Gate as gate   # 分鏡卡「成片取」「台詞窗」的解析，和鏡頭表檢查同一套
+import 檢查鏡頭表 as gate   # 分鏡卡「成片取」「台詞窗」的解析函式在鏡頭表檢查器裡
 sys.stdout.reconfigure(encoding="utf-8")
 FF = CFG["ffmpeg"]
 W, H = PROFILES["formal"]["w"], PROFILES["formal"]["h"]   # 靜態圖縮放到正式檔位的畫布
@@ -106,7 +105,7 @@ for i, (path, *_, n) in enumerate(clips):
         overlays.append([p, starts[i] / FPS + t, g])
 # ---- 成片只收核可片（5-結案.md §5）：每條片段要有 label；鏡頭表那一鏡的狀態是「過（檔名、日期）」且含這個檔名；驗片包在；
 #      驗片包 cut 標「要看」的要有人工判定檔 片名_驗片.md；取段照分鏡卡「成片取」，台詞窗不能被切到。
-#      靜態圖（Animatic）不在此限。缺一條就 ❌ 不出片，--dry-run 也報
+#      靜態圖不在此限。缺一條就 ❌ 不出片，--dry-run 也報
 問題 = []
 if not all(stills):
     TOL = 1 / FPS + 1e-6   # 一格

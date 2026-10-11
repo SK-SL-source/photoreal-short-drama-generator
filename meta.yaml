@@ -1,32 +1,32 @@
 display-name-zh: 仿真人短劇成片
-version: 1.3.2
+version: 2.0.0
 tag-en: "Short Drama / Creative Generation"
 tag-cn: "短剧漫剧 / 创作生成"
 complete-tags-en:
   - "Short Drama / Creative Generation"
 complete-tags-cn:
   - "短剧漫剧 / 创作生成"
-summary-en: "Turns a short-drama idea or script into a photoreal episode, in a 3D or live-action look, on local ComfyUI (MiniMax H3) through five stations: script and event table; art direction locked per project, assets, a narrative-efficient storyboard, voice assets, storyboard references and an approved animatic as the Final Shot Lock; H3 prompts compiled from the locked cards and linted; gated queued generation with measured clip review; sound post and the final cut."
-summary-cn: "在本機 ComfyUI（MiniMax H3）照五站把短劇創意或劇本做成仿真人成片（寫實 3D 或實拍電影感）：劇本與事件表；逐案鎖定的美術方向、資產、講求敘事效率的分鏡、音色資產、分鏡參考圖和核可為 Final Shot Lock 的 Animatic；從鎖定的分鏡卡編譯並通過 lint 的 H3 提示詞；過量產關卡才送的佇列生成與量測驗片；聲音後製與成片。"
-desc-en: "For creators producing photoreal short dramas, in a 3D or live-action look, on a local MiniMax H3 setup who need identities, voices, actions and dialogue under control. Provide a story idea or a finished script, then choose aspect ratio, length, music mode, reference-image source and style. The Skill writes or imports the story and final lines and breaks it into an event table. Before any storyboard it settles the art direction with the user from the script (visual bible, art paragraph, Style Master as the approval reference) and locks it only when the user says so; every project keeps its own look and the Skill has none. It builds the asset cards, decides which shots each event needs and what each must deliver (narrative skeleton), completes only the kept shots into cards with camera, lens, an action card with a time budget, first-frame source and continuity handoff (text storyboard), and checks the whole episode with narrative tests (narrative QC). Each speaking identity gets one approved voice asset; each shot gets one storyboard reference image; the references and preview speech are cut into an animatic the user reviews as a whole. Only an approved animatic version becomes the Final Shot Lock: the plan is fingerprinted into 量產關卡.json, prompts are compiled from the locked cards and linted, and every H3 clip is checked against the locked plan when queued and again before dispatch; without a valid lock or an explicitly authorized exception no formal H3 video is sent. Clips render on the PDD 8-step profile through a queue ledger that relays first frames and holds a relay when the source clip shows a cut or a leaked reference sheet. Every clip is measured into a review packet before the user approves it item by item in chat, and rework stays within classified limits. Inner voice, narration and music cues are produced in post, assembled through a rough cut and a fine cut into the final cut, with a no-music master kept every time. The Skill carries a default rules core, a prompt lint, a shot-table check, a production-gate checker and a setup check; local rule files and machine settings override the defaults. Not for single clips, simple edits or narration-led productions."
-desc-cn: "面向在本機 MiniMax H3 製作仿真人短劇（寫實 3D 或實拍電影感）、需要穩定控制角色身分、聲音、動作與台詞的創作者。使用者提供故事創意或完成的劇本，選擇畫幅、長度、配樂模式、參考圖來源與畫風。技能會撰寫或匯入故事與台詞，拆成事件表。分鏡之前先照劇本和使用者定下美術方向（視覺聖經、美術段、當核可基準的 Style Master），使用者說鎖定才鎖；每一案有自己的美術，技能不固定畫風。接著做資產卡，判斷每個事件要幾鏡、每一鏡要交付什麼（敘事骨架），只把保留的鏡補成完整的分鏡卡——鏡頭、焦距、含時間預算的動作卡、首幀從哪裡來、每個切點的連戲交接（文字分鏡），再用敘事判準把整集驗收一遍（敘事驗收）。每個出聲的身份一份核可的音色資產，每一鏡一張分鏡參考圖，參考圖和預覽語音接成 Animatic 給使用者看整集。只有使用者核可的那一版 Animatic 能成為 Final Shot Lock：製作計畫的指紋寫進 量產關卡.json，提示詞從鎖定的分鏡卡編譯並跑 lint，每一條 H3 片段排進佇列時和送出前都對照鎖定的計畫檢查；沒有有效的鎖或使用者明確授權的例外，就不送正式 H3 影片。片段用 PDD 8 步正式檔位，經由佇列帳本送件，首幀自動接力，來源片有切鏡或漏出角色卡時先停下來等人看。每條片段先量測、產出驗片包，再由使用者在聊天裡逐條核可；重做依類型有上限。心聲、旁白與分段配樂在後製完成，經過粗剪、細剪混成成片，每次都另存無配樂母版。技能內附預設的規則核心、提示詞 lint、鏡頭表檢查、量產關卡檢查和開工檢查；在地規則檔和本機設定可以覆寫。不適用單一片段、簡單剪輯或旁白主導的製作。"
+summary-en: "Turns a short-drama script into a photoreal episode on local ComfyUI (MiniMax H3 + Qwen-Image 2.1) in five stations: script and event table; character boards, scene cards, scene relation tables and voices compiled from templates against the user's five reference images; shot table, shot cards and one first-frame image per shot checked by an image gate; H3 prompts linted and queued; measured clip review; edit and final cut. One gate per station, silence means approved, and generation only uses files in the approved folder."
+summary-cn: "在本機 ComfyUI（MiniMax H3＋Qwen-Image 2.1）照五站把短劇劇本做成仿真人成片：劇本與事件表；照使用者五張基準圖、由母版編譯的角色板、場景卡、場景關係表與音色；鏡頭表、分鏡卡和每鏡一張第 0 幀圖（圖像檢查器把關）；H3 提示詞過 lint 後整批排佇列生成、量測驗片；剪接成片。一站一關、沒回視為過，送件只能掛已核可資料夾裡的檔。"
+desc-en: "For creators producing photoreal short dramas on a local MiniMax H3 setup who need identities, wardrobe, voices, actions and dialogue under control. Provide a script and five reference images; the Skill writes the story and event table, compiles character boards and scene cards from fixed templates (style, beauty, wardrobe system, layout) with an ugly-wardrobe gate, builds the shot table and cards, makes one first-frame image per shot checked against the shot table, compiles and lints H3 prompts, queues clips that only reference approved files, measures every clip into a review packet, and cuts the episode. Every station is delivered as one batch; the user replies only to the items that need changes. Not for single clips, simple edits or narration-led productions."
+desc-cn: "面向在本機 MiniMax H3 製作仿真人短劇、需要穩定控制角色身分、服裝造型、聲音、動作與台詞的創作者。使用者提供劇本和五張基準圖；技能寫故事與事件表，用固定母版（畫風、人物審美、服裝造型系統、版型）編譯角色板和場景卡並過醜衣／醜景 Gate，建鏡頭表與分鏡卡，每鏡一張第 0 幀圖並對鏡頭表檢查，編譯並 lint H3 提示詞，只掛已核可檔的佇列生成，每條片段量測成驗片包，最後剪成成片。每一站整批交，使用者只回要改的項目。不適用單一片段、簡單剪輯或旁白主導的製作。"
 author-en: "photoreal-short-drama-generator contributors"
 author-cn: "photoreal-short-drama-generator contributors"
 source: community
 structured-info:
   zh-CN:
-    summary: 在本機 MiniMax H3 照五站把短劇創意或劇本做成仿真人成片：美術方向逐案鎖定，每一鏡都有敘事目的，Animatic 核可後才鎖定製作計畫，提示詞先過 lint，正式 H3 過量產關卡才送、片段先量測再逐條驗收。
+    summary: 在本機 MiniMax H3＋Qwen-Image 2.1 照五站把短劇劇本做成仿真人成片：畫風照使用者五張基準圖定死，卡片由母版編譯，每鏡一張第 0 幀圖過檢查器，送件只掛已核可檔。
     best-for:
       - 仿真人短劇
-      - 分鏡與事件表
+      - 角色板與場景卡
       - 台詞口型
-    how-to-use: 先跑開工檢查，再提供創意或劇本，選擇畫幅、長度、配樂模式、參考圖來源與畫風後開始；第 2 站會停下來請你鎖定美術方向、核可 Animatic、說「鎖定」。
-    outputs: 劇本與事件表、視覺聖經與 Style Master、角色卡、場景卡、音色資產、鏡頭表與分鏡卡、分鏡參考圖與首幀、Animatic、量產關卡、H3 提示詞、片段與驗片包、粗剪、細剪、成片與無配樂母版。
+    how-to-use: 先跑開工檢查，給劇本和五張基準圖；每一站做完整批交給你，你只回要改的項目，沒回視為過；每站只有一張生成授權卡。
+    outputs: 劇本與事件表、角色板與裁圖、場景卡、場景關係表、音色、鏡頭表與分鏡卡、每鏡第 0 幀圖、H3 提示詞、片段與驗片包、粗剪細剪成片與無配樂母版。
   en-US:
-    summary: Turn a short-drama idea or script into a photoreal episode on local MiniMax H3 in five stations, with the art direction locked per project, a narrative purpose for every shot, the production plan locked only after an approved animatic, linted prompts, formal H3 clips sent only through the production gate, and measured clips approved one by one.
+    summary: Turn a short-drama script into a photoreal episode on local MiniMax H3 + Qwen-Image 2.1 in five stations, with the look fixed by the user's five reference images, cards compiled from templates, one gated first-frame image per shot, and generation that only uses approved files.
     best-for:
       - Photoreal Short Drama
-      - Storyboard and Event Table
+      - Character Boards and Scene Cards
       - Dialogue Lip Sync
-    how-to-use: Run the setup check, then provide an idea or a script and choose aspect ratio, length, music mode, the reference-image source and the style to begin; station 2 stops for you to lock the art direction, approve the animatic and say lock.
-    outputs: Script and event table, visual bible and Style Master, character and scene cards, voice assets, shot table and cards, storyboard references and first frames, animatic, production gate record, H3 prompts, clips with review packets, rough and fine cuts, the final cut and a no-music master.
+    how-to-use: Run the setup check, provide a script and five reference images; each station is delivered as one batch, you reply only to what needs changing, silence means approved, and each station has a single generation-authorization card.
+    outputs: Script and event table, character boards and crops, scene cards, scene relation tables, voices, shot table and cards, one first-frame image per shot, H3 prompts, clips with review packets, rough cut, fine cut, final cut and a no-music master.

@@ -1,114 +1,83 @@
 ---
 name: photoreal-short-drama-generator
 description: |
-  Make a photoreal short drama (3D or live-action look) on local ComfyUI (MiniMax H3) through five stations: script and event table; art direction locked per project, assets, a narrative-efficient storyboard, voice assets, storyboard references and an animatic the user approves as the production plan; H3 prompts compiled from the locked cards and linted; queued generation behind a mechanically enforced production gate, with measured clip review; then sound post and the final cut. Not for single clips.
-trigger-words: [仿真人短剧, 仿真人短劇, 仿真人写实3D, 仿真人寫實3D, 写实3D短剧, 寫實3D短劇, photoreal short drama, photoreal 3D drama]
+  在本機 ComfyUI（MiniMax H3＋Qwen-Image 2.1）照五站把短劇劇本做成仿真人成片：劇本與事件表；照使用者五張基準圖做角色板、場景卡、場景關係表、音色；鏡頭表、分鏡卡和每鏡一張第 0 幀圖（圖像檢查器把關）；H3 提示詞過 lint 後整批排佇列生成、量測驗片；剪接成片。一站一關、沒回視為過；核可的檔進 已核可/，送件只能掛裡面的檔。不適用單一片段、簡單剪輯或旁白主導的製作。
+trigger-words: [仿真人短剧, 仿真人短劇, 寫實短劇, 写实短剧, photoreal short drama]
 ---
 
-# Photoreal Short Drama Generator
+# 仿真人短劇成片
 
-Turn a short-drama idea or script into a finished photoreal short, in a 3D or live-action look, one station at a time. This Skill says what to decide, in what order, and who approves; its rules core says how.
+把短劇劇本做成仿真人成片，一次做一站；開工只讀這一頁，到哪一站才讀那一站的檔，寫提示詞時才翻查表。用使用者的語言溝通。
 
-Talk to the user in their language. Documents for the user (brief, story, storyboard, check notes) are in their language; H3 prompts follow station 3.
+## 穩定性：CC 不得自行發揮
 
-## Settings and rules
+同一份劇本、同一套資產，不管哪一天、哪一個對話做，產出的提示詞和檔案都要一樣。靠的是讓 CC 沒有地方可以改：
 
-- **Machine settings:** "the settings" means `scripts/設定.json` (defaults shipped with this Skill) overridden by `scripts/設定.local.json` (this machine's values, never uploaded): the ComfyUI address and folder, Python, ffmpeg, the longest clip this GPU can render, model file names, and the local files below. Run `scripts/開工檢查.py` with that Python on a new machine, after changing the settings, and at the start of each work session; fix every ❌ before going on.
-- **Rules:** `references/規則核心.md` is bundled with this Skill. `local_rules` in the settings lists local rule files, such as a studio's own rules or a prompt lab's verified patterns. Where a local file covers a point it wins over the core, and earlier files in the list win over later ones. Read the core and the local files before station 1, and again before writing prompts.
-- **Official H3 format:** `official_guides` in the settings points to MiniMax's H3 prompt guides (`base-en.txt`, `ref-en.txt`). Without them, follow the format summary in the core (§6).
-- **Checkers:** `scripts/h3_prompt_lint.py` checks every prompt; the external lint named in the settings is used instead when it exists. `scripts/檢查鏡頭表.py` checks the shot table. `scripts/檢查量產Gate.py` checks the lock prerequisites and the G5D lock and records the lock, its invalidation and exceptions; the queue runs its per-shot preflight. Scripts and checkers only implement the rules and never set rules of their own; a script that disagrees with a rule file is a bug to report.
+| 機制 | 怎麼做 |
+|---|---|
+| 提示詞是填空，不是寫作 | 卡片由母版編譯（spec 填槽，`查表-圖像母版.md`）；分鏡圖（`3-分鏡.md` §4）和影片（`4-影片提示詞.md`）是帶 `{欄位}` 的定型句，欄位只能從分鏡卡、資產表、場景關係表抄；欄位以外的字一個都不動。Gate 和檢查器（`圖像檢查.py`、`h3_prompt_lint.py`）不過就不送 |
+| 卡上沒寫的，不補 | 填空時缺欄位，回第 3 站把卡補好，不在提示詞裡自己補一句 |
+| 不得新增檔案 | 專案資料夾只有下面的固定清單；`開工檢查.py 專案資料夾` 會把清單以外的列出來 ⚠️ |
+| 不得改 Skill | Skill 資料夾對 CC 是唯讀。只有使用者說「改 Skill」且指名改哪一條才能動，改完 CHANGELOG 寫一行。做事時發現 Skill 有問題，寫進工單的「待決」，不改 |
+| 重做只改被點名的那一句 | 使用者說「S13 她要往左看」，只改視線那一句，其他字和 seed 都不動；重做前先貼舊句→新句的對照再送。想順便改別的，寫進「待決」問 |
+| seed 固定 | 每鏡（每張卡）第一次的 seed 寫進鏡頭表（資產表），之後沒被要求「換 seed」就用同一個 |
+| 開工先報到 | 每次開工第一句回報：Skill 版號、讀了哪幾個檔、現在在第幾站、`已核可/` 裡有什麼。跟上次不一樣就停下來問 |
+| 不確定就問，不猜 | 工單有一段「待決」：想加規則、加步驟、換做法，一律寫這裡，每站交件時一起給使用者看。寫了就是做到 |
 
-Use only writing that the core or a local rule file marks as verified, or that this Skill's templates carry. Anything else is a test and is labeled as one.
+## 設定與檢查器
 
-When a step here conflicts with those files, or cannot be done, stop and report in three parts: which shot or station; what happened, in one plain sentence; two options for the user to choose from.
+- 設定＝`scripts/設定.json`（預設）＋`scripts/設定.local.json`（這台機器的值，不上傳）：ComfyUI 位址與資料夾、python、ffmpeg、最長片長、模型檔名、`projects_root`。開工先跑 `python _腳本/開工檢查.py 專案資料夾`。
+- 開工時把 `scripts/` 整個複製到專案 `_腳本/`。母版編譯器：`qwen_t2i_母版.py`（角色板）、`scene_t2i_母版.py`（場景卡），各帶 Gate。檢查器：`檢查鏡頭表.py`（鏡頭表）、`圖像檢查.py`（分鏡圖提示詞）、`h3_prompt_lint.py`（影片提示詞）、`驗片量測.py`（片段量測）；送件 `佇列.py`；剪接 `剪接.py`、`配樂組合.py`。
+- 查表：`references/查表-H3句型.md`（寫影片提示詞時翻）、`references/查表-圖像母版.md`（寫卡片 spec 時翻）。畫風 `presets/畫風.md`、聲音 `presets/audio/dialogue-led.md`。
 
-## Principles
-
-1. **Every item is decided.** Every part of the frame, every second of a clip and every sound track is written down somewhere, including "deliberately empty" or "deliberately quiet". Whatever nobody decides, the model fills with its average.
-2. **A shot never spans two events.** Two logically separate events are two shots; one event may take several shots, one per narrative beat (`references/2A-分鏡敘事.md` §4). When the events outnumber the shots agreed at intake, ask the user whether to add shots or merge two events; never squeeze them into one shot yourself.
-3. **Every shot has a narrative purpose**: a beat (what the audience knows or feels that they did not a second ago), or a hold, delay, orientation or callback whose premise holds. Shot size follows the expression point: the widest size that keeps it fully effective. Camera position, lens and aperture follow from the purpose.
-4. **Move capability limits upstream.** Whatever AI cannot do reliably (readable text, exact counts, exact cut points, mirror detail, piece-by-piece hand work) is changed at the script or storyboard station, not forced in the prompt.
-5. **Prompts are compiled** from approved storyboard cards. The prompt adds nothing the card does not say.
-6. **Review by measurement plus human judgment.** Verdicts are pass, fail or not verified; missing evidence is not a pass.
-7. **Only the user changes the story.** When something cannot be done as written, or a storyboard proposal would touch approved content, offer options marked "story change" and wait. Story changes are decided when they arise: a conditional or advance permission ("if it is hard, change X") is not an authorization and is never written into the work order as a rule to apply later; note it as story change pending, keep the script as approved, and ask again when the condition actually occurs.
-8. **Only the user locks the art direction.** Analyse the script and propose two or three directions; which one becomes the look of the whole work is the user's decision.
-
-## Gates, authorization and rework
-
-- Do one station at a time and stop at each gate.
-- **Reviews happen in chat, item by item.** "File or item + 過" approves that item; "file + a change" is the rework instruction and the approval for that one regeneration (state the estimated time when you queue it). A reply that does not name an item, such as "ok", "fine", "continue" or "go on" after several items, approves nothing and changes no status, even when you have just told the user the rule: write nothing in the status column and ask which items. Only a reply that names the item (A01 過, S03 過) counts. Keep the shot table's status column current, so the list of items waiting for review can be read from it at any time.
-- **Choice cards (AskUserQuestion) only for batch authorization and branch decisions:** the intake card, generation authorization, and choices between options such as rework routes, story changes or a profile change. Put a gate's questions on one card.
-- Review results never authorize more generation. Every image, video, audio or music generation, and every re-edit, needs the user's approval for that operation: say which shots, what changes, how many outputs and the estimated render time.
-- One approval covers one generation per listed item unless the user approves a bounded batch.
-- **Redo exactly as told.** Change only what the user named; if something else seems worth changing, ask first.
-- **Rework limit,** counted per shot in the shot table:
-  - Technical failure (the clip does not do what its card says): the first generation plus at most two more for the same issue. Regenerating its keyframe counts; switching modes, splitting the shot or renaming the issue does not reset the count. At the limit, go back to station 2 (or 1).
-  - The user gives a new direction (performance, timing, camera, mood): a new issue, counted from zero.
-  - The user explicitly asks to keep trying: allowed past the limit, one generation per explicit request, noted in the work order. At the limit, stop before queuing anything and put the choice on a card: back to station 2 (or 1), split or re-edit the shot, or keep trying once more. A seed change mentioned in passing is not that request.
-- Change only the affected shots; approved outputs stay locked. A new candidate is not approved until the user approves it.
-- Before every generation batch: every H3 prompt passes the lint and every node graph passes `check_graph`. H3 video generation (`h3_ref`, `h3_i2v`, any profile) also needs a valid G5D lock and a passed per-shot preflight (`references/4-生成與驗片.md` §1); without them it runs only inside a narrow exception the user authorized in their own words (the words say 例外 and name the shots; "send it now" or "just try it" is not an authorization) and that is recorded in `量產關卡.json`, never as a silent bypass. Before recording an exception, show the exception card (shots, outputs, profile, estimated time, which gates it skips) and wait; the queue enforces this with a one-time permit issued only when the dispatch-time preflight passes, so `comfy.run` and direct submits cannot send H3 video. If the user wants to watch progress, open the ComfyUI page from the settings in one browser tab (`comfy.open_chrome_once()` does it with Chrome on Windows).
-
-## Project folder
-
-Create each project under `projects_root` from the settings (ask the user when it is empty); a test project uses the same layout in its own folder.
+## 專案資料夾（固定清單，`projects_root` 底下一案一夾）
 
 ```text
-1-劇本.md       brief, story, final lines, event table
-2-鏡頭表.csv    overview, continuity, status (checked with _腳本\檢查鏡頭表.py)
-2-分鏡.md       visual bible, asset list, narrative ledger, shot cards, voice assets, storyboard reference list, cue sheet
-2-分鏡圖\       storyboard reference images, one per shot that goes into production
-2-預覽\         animatic versions (animatic_vNN.mp4 and its .json timeline) and preview speech
-資產\           cards, voice files, first frames
-3-提示詞\       one prompt per shot, plus check notes
-4-影片\         clips, review packets (驗片\) and review notes
-5-成片\         rough cuts, fine cuts, the final cut and the no-music master
-量產關卡.json   G5D lock: the approved animatic version, source fingerprints and exceptions
-工單.md         project settings, progress, issues, lessons
-_腳本\          a copy of this Skill's scripts\ (with 設定.json and 設定.local.json), each station's job scripts, and the queue ledger 佇列\
+0-原始資料/   使用者給的小說、劇本原文（可以沒有）
+1-劇本.md     簡報、故事、定稿台詞、事件表
+2-資產.md     資產表、場景關係表、音色表
+2-鏡頭表.csv  每鏡一列：秒數、台詞、景別、站位、視線、道具、參考圖、首幀來源、seed、審圖、狀態
+2-分鏡.md     分鏡卡
+2-分鏡圖/     每鏡一張第 0 幀圖
+資產/         風格基準/（使用者五張）、角色板、裁圖、場景卡、道具卡、音色檔
+3-提示詞/     每鏡一支影片提示詞和 lint 紀錄
+4-影片/       片段、驗片/（驗片包）
+5-成片/       粗剪、細剪、成片、無配樂母版
+已核可/       1-劇本/ 2-資產/ 3-分鏡/ 4-生成/ 5-成片/
+工單.md       專案設定、進度、待決、經驗
+_腳本/        scripts/ 的複本、送件腳本、佇列/ 帳本、生成紀錄.jsonl
 ```
 
-Work only from this folder and the series-state file (`series_state` in the settings, when set); never carry story, settings or one-off fixes over from other episodes.
+## 五站
 
-## Station 1: Script
+一站一關，站內 CC 做完整批才交，不分次問。使用者只回有問題的項目；沒回視為過，沒被點名的檔移進 `已核可/`。每站只有一張選項卡（AskUserQuestion）：生成授權，一批一次，批內 CC 自己跑。其他一律用文字。
 
-Follow `references/1-劇本.md`.
-- G1 intake card: aspect ratio, total length and shot count (with the local 5.17-second minimum per clip), music mode, reference-image source, style preset.
-- G2 brief, story, final lines, capability pre-check and the event table, approved together.
+| 站 | 讀 | CC 交什麼 | 檢查器 | 過了之後 |
+|---|---|---|---|---|
+| 1 劇本 | `references/1-劇本.md` | 簡報、故事、台詞、事件表，一次交 | — | `1-劇本.md` → `已核可/1-劇本/` |
+| 2 美術與資產 | `references/2-資產.md`、`presets/畫風.md`、`查表-圖像母版.md` | 角色板、場景卡（寫 spec，由 `qwen_t2i_母版.py`、`scene_t2i_母版.py` 編譯）、道具卡、場景關係表、音色，和五張基準圖並排成一張對照表 | 醜衣／醜景 Gate；六件事並排比對 | 卡圖、裁圖、音色、`2-資產.md` → `已核可/2-資產/` |
+| 3 分鏡與參考圖 | `references/3-分鏡.md` | 鏡頭表＋分鏡卡＋每鏡一張圖，排成縮圖表；每張圖附八項審圖表 | `檢查鏡頭表.py`、`圖像檢查.py` | 鏡頭表、分鏡卡、圖 → `已核可/3-分鏡/` |
+| 4 生成 | `references/4-影片提示詞.md`、`5-生成.md`、查表 | 提示詞全部過 lint → 整批排佇列 → 驗片包縮圖表 | `h3_prompt_lint.py`、佇列送件前查 `已核可/`、`驗片量測.py` | 片段＋驗片/ → `已核可/4-生成/` |
+| 5 成片 | `references/5-結案.md` | 粗剪→細剪→成片，一次交三版 | `剪接.py` 只收核可片 | 使用者選一版；結案：經驗庫最多加 3 條 |
 
-## Station 2: Storyboard
+## 核可資料夾（只有三條）
 
-Follow `references/2A-分鏡敘事.md` to decide which shots to make and what each must deliver, then `references/2-分鏡.md`, the chosen style preset and the audio preset.
-- G3A art direction lock: propose art directions from the script and settle them with the user through a few questions; then write the visual bible (the single source of truth for the look) with its fixed art paragraph for image prompts, and generate Style Master candidates for the user to approve. No cards or first frames are generated before the user approves both the visual bible and the Style Master. Approving a Style Master and locking the art direction are two decisions on two cards: after the Style Master is approved, put up the lock card (鎖定美術／修改指定欄位／重做 Style Master) and record G3A LOCKED only when the user picks 鎖定美術; never fold the lock into the approval reply.
-- G3B assets: cards and the asset list; every batch is compared with the Style Master before approval. G4A is written and submitted only after the assets due this round are approved and the user locks them; an approved list, a generation authorization or a finished render is not a card approval, and G4A is never delivered alongside pending assets as an independent gate.
-- G4A narrative skeleton, for the whole episode before any full card: the narrative ledger first; for each candidate shot only the card header, the 2A block (beat, expression point, delete test, scale, verdict) and any story-change question it raises. No shot table yet. Only shots whose final verdict is keep go on to G4B; an open question blocks G4B, and an approved story change goes into `1-劇本.md` first.
-- G4B text storyboard, only for the shots kept at G4A, on the same cards: narrative purpose, camera, action card, sound, first-frame source, the continuity handoff at each cut, and A/B segments where one generation cannot hold the order; the cue sheet when there is music. When every card has its shot size, review the episode's scale and shot-size sequence once and write it as one line in the narrative ledger (2-分鏡.md §8); then build the shot table and run its check before showing it.
-- G4C narrative QC: one pass over the whole episode with the 2A tests; list only the problem shots and send each back to G4A (narrative) or G4B (camera and production), redoing only what it affects.
-- G5A voice assets, after G4C: list every identity that actually speaks (dialogue, off-screen voice, inner voice, narration) and give each one approved voice file: the user's reference, the series' approved voice, or a picked `h3_voice` candidate. A voice asset decides how an approved speaker sounds, never who speaks or what is said.
-- G5B storyboard references and first frames: every shot that goes into production gets one storyboard reference image in `2-分鏡圖\`, compiled from its card and the approved assets at the lowest sufficient cost (an approved image, a crop of a master, then a cheap composite). It is a previz asset for review and the animatic. The first-frame strategy stays as planned at G4B; relay and borrowed frames stay pending until their clips exist, and a storyboard reference becomes a first frame only when it passes the eligibility check.
-- G5C animatic, after G5B: the approved storyboard references cut together in the shot table's order and durations, hard cuts only, with preview speech made from the approved lines and voices (`h3_vo`) and any existing sound cue that carries the story (otherwise marked unresolved); each version is `2-預覽\animatic_vNN.mp4` plus its `剪接.py` config. The user reviews the whole episode for story, pacing, fit of the lines and the order of reveals across shots before any formal generation (a still image proves nothing about timing inside a shot, which stays with the G4B action card); each problem goes back to the layer that owns it (G4A/G4C, G4B, G5B, G5A or station 1), and nothing is rewritten in the animatic.
-- G5D final shot lock, after the user approves one complete animatic version: check the lock prerequisites from the project files, never from the work order (the gate record says G3A LOCKED, G4C PASS and G5C PASS for exactly this animatic version; every asset and voice the shots use is approved; each shot has one approved storyboard reference with all three checks passed; derived columns agree with their sources); when the user says lock, `檢查量產Gate.py lock` re-checks them and records the approved animatic and fingerprints of the shot table, the production plan (including `1-劇本.md`) and that animatic in `量產關卡.json`. Any later change to the plan (the script, shots, order, durations, lines, speakers, staging, camera, action cards, sound windows, splits, first-frame strategy, voices, storyboard references, cards) invalidates the lock until a new animatic is approved; runtime state (status, file names, retries, seeds, a resolved relay frame) does not.
+1. 一站過了，那一站的產出物移進 `已核可/`；裡面的東西 CC 不得修改、重命名、重生。
+2. 送件（圖和影片）只能掛 `已核可/` 裡的檔；佇列送件前只檢查這一條。
+3. 要改已核可的東西，使用者自己把檔移出來，改完重新過那一站。CC 不代勞。
 
-## Station 3: Prompts
+生成紀錄：每次送件把實際送出的提示詞、參考圖檔名順序、seed、尺寸、步數寫進 `_腳本/生成紀錄.jsonl`；任何清單、縮圖表都從它反查產生，不另外維護一份；沒紀錄的圖不能進 `已核可/`。
 
-Follow `references/3-提示詞.md` once G5D is locked: route each shot to an H3 mode, compile the prompt from its card, lint it, paste two prompts in full for the spot check (all six sections of both prompts, in the reply itself; a file name or a summary is not a spot check) so the user can compare them with the cards for anything the card does not say, then the generation authorization card (G6).
+## 授權、重做、回報
 
-## Station 4: Generate and review
+- 生成前要有那一站的授權卡；卡上沒列的不生成。重做上限：同一鏡同一問題最多兩輪，超過就回上一站問；使用者給新方向算新問題；使用者明確說再試可以超過，工單記一筆。
+- 劇情只有使用者能改：做不到就列選項、標「劇情改動」，寫進待決，沒點頭前一字不動。
+- 遇到規則衝突、做不到、或覺得規範要改：停下來問，用三段——哪一鏡或哪一站；發生什麼事（一句白話）；兩個選項給使用者挑。
 
-Follow `references/4-生成與驗片.md`: queue only authorized items that pass the per-shot preflight through the queue ledger (`_腳本/佇列.py`, which also relays first frames), let the queue run the review packet on each finished clip (a clip without a packet, or without the user's 過, cannot be cut into the film), list the clips waiting for review and take the user's item-by-item replies, record the status in the shot table, and handle failures within the rework limits (G7).
+## 維護
 
-## Station 5: Close
+1. **長度上限**：SKILL.md ≤ 100 行，每站文件 ≤ 150 行，查表不限。超過要先刪舊的才能加新的。
+2. **新規則要有證據**：加一條規則要同時寫明「哪個檢查器在查它」或「哪個失敗樣本證明需要它」，兩個都沒有不准進。實驗標準：3 個 seed 全過。
+3. **經驗庫有進有出**：每集結案最多加 3 條，每加 1 條要同時指定 1 條舊的刪掉或合併。
 
-Follow `references/5-結案.md`: inner voice and narration, music cues assembled into one track, rough cut, fine cut and mix with a versioned config for each cut, and the no-music master (G8; each generation needs authorization). Then final approval (G9): update the work order, and the lessons and series-state files named in the settings.
-
-## Presets
-
-- Style: `presets/style/photoreal-3d.md` (style-sentence formula, visual-bible defaults, card and Style Master specs) or `presets/style/live-action.md` (live-action film look; same defaults and specs), chosen on the intake card.
-- Audio: `presets/audio/dialogue-led.md`.
-
-Only these exist. Add another only when a project needs it and it has been tested.
-
-## Boundaries
-
-Not for a single image, one standalone clip, a simple edit, or prompt-only help. Narration-led and 2D productions are not covered yet.
-
-Sources: the rules core is distilled from a studio rule file and a prompt lab's controlled tests (one variable per test, three seeds, on a local RTX 3090), then checked in two end-to-end test productions. The event table, purpose-first shot design and continuity checks are adapted from DirectorSKILL (MIT License; see `THIRD_PARTY_NOTICES.md`).
+CC 每次改 Skill 都要在 CHANGELOG 寫一行：刪了什麼、加了什麼、證據是什麼。

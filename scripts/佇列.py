@@ -1,6 +1,6 @@
 """佇列帳本：一次排很多條、不用等它跑完；用 prompt_id 追進度，完成就把輸出複製回專案、記進 生成紀錄.jsonl。
 接力：等前一條完成，先檢查它有沒有片中切鏡或漏出參考圖（驗片量測 cut），沒問題才取它的一格當這一條的首幀送出。
-H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出前各過一次送件前檢查（檢查量產Gate.py），排進來先記「待送出」，由 wait 送出；送出前那一次過了才拿到一次性通行證，comfy._post 只認它。
+H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出前只查一條——meta 列的參考圖、音色、首幀都在專案 已核可/ 裡（references/5-生成.md §1），排進來先記「待送出」，由 wait 送出。
 帳本在 _腳本\\佇列\\，一條一個檔；程式中斷了，重跑 wait 就接著做。
 
 送件腳本裡：
@@ -9,7 +9,7 @@ H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出�
     佇列.add("S03_r1_s1001", g, ["4-影片/S03_r1_s1001.mp4"], meta={"鏡": "S03", "提示詞": "3-提示詞/S03.txt", "seed": 1001})
     佇列.add("S04_r1_s1001", g4, ["4-影片/S04_r1_s1001.mp4"], after=("S03_r1_s1001", -1, "100"), meta={"鏡": "S04", …})
         # after＝(前一條, 第幾格（−1＝最後一格）, 要換圖的 LoadImage 節點)；接力、借格、B 段的鏡一定要給，送件前檢查核對它接的就是計畫寫的那一鏡那一格
-        # H3 影片的 meta 要有「鏡」「提示詞」；拆段的鏡加「段」（A／B），用例外加「例外」（例：EXC-001）
+        # H3 影片的 meta 要有「鏡」「提示詞」「seed」「refs」（掛的檔，專案相對路徑，照順序）「first_frame」（首幀路徑；接力寫 "接力"）；拆段的鏡加「段」（A／B）
 命令列：
     python 佇列.py                看狀態（不改帳本）
     python 佇列.py wait [秒]       每隔幾秒（預設 30）收完成的、送輪到的接力，沒有會自己往下走的才停；同一時間只開一個
@@ -18,7 +18,6 @@ H3 影片（h3_ref、h3_i2v）只能經這裡送：排進來時和真的送出�
 """
 import argparse, contextlib, io, json, os, shutil, subprocess, sys, time, urllib.error, urllib.request
 import comfy
-import 檢查量產Gate as gate
 from 驗片量測 import cmd_pack, cut_one
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -52,12 +51,37 @@ def _say(job):
     print(f"[{job['id']}] {job['state']} {job.get('error') or job.get('prompt_id') or ''}".rstrip(), flush=True)
 
 
+def _not_approved(job):
+    """送件前唯一的檢查（references/5-生成.md §1）：meta 的 refs、first_frame 列的每個檔都在專案 已核可/ 底下而且存在；
+    數量要等於節點圖裡 LoadImage＋LoadAudio 的節點數（接力的首幀由佇列自己取格，不算）。回傳問題清單，空＝過"""
+    meta, graph = job["meta"], job["graph"]
+    relay = bool(job.get("after"))
+    files = list(meta.get("refs") or [])
+    ff = meta.get("first_frame")
+    if ff and ff != "接力":
+        files.append(ff)
+    bad = []
+    if not meta.get("refs"):
+        bad.append("meta 沒有 refs（掛的檔清單）")
+    for p in files:
+        rel = str(p).replace("\\", "/")
+        if not rel.startswith("已核可/"):
+            bad.append(f"{rel} 不在 已核可/ 底下")
+        elif not os.path.isfile(os.path.join(comfy.PROJ, rel)):
+            bad.append(f"{rel} 不存在")
+    n_nodes = sum(1 for n in graph.values() if n.get("class_type") in ("LoadImage", "LoadAudio"))
+    if n_nodes != len(files) + (1 if relay else 0):
+        bad.append(f"節點圖掛了 {n_nodes} 個檔，meta 列了 {len(files)}{'＋接力首幀 1' if relay else ''} 個，要一樣")
+    if not relay and not ff and (comfy.h3_video_facts(graph) or {}).get("first_frame"):
+        bad.append("節點圖釘了首幀，meta 沒寫 first_frame")
+    return bad
+
+
 def _submit(job):
-    facts, pre = comfy.h3_video_facts(job["graph"]), None
-    if facts:   # H3 影片：真的送出前再過一次送件前檢查（排進來之後關卡可能已經失效）
-        pre = gate.validate_shot_preflight(facts, job["meta"], "dispatch", after=job["after"], relay_frame=job.get("relay_frame"), job=job["id"])
-        if not pre["ok"]:
-            job.update(state=BLOCKED, error=pre["message"], gate=pre["reasons"])
+    if comfy.h3_video_facts(job["graph"]):   # H3 影片：真的送出前只查一條——掛的檔都在 已核可/ 裡
+        bad = _not_approved(job)
+        if bad:
+            job.update(state=BLOCKED, error="掛的檔不在 已核可/：" + "；".join(bad))
             return
     problems = comfy.check_graph(job["graph"])
     if problems:
@@ -65,7 +89,7 @@ def _submit(job):
         return
     try:
         resp = json.loads(comfy._post("/prompt", {"prompt": job["graph"], "client_id": "short-drama", "front": job["front"]},
-                                      permit=pre["permit"] if pre else None, job=job["id"]))
+                                      job=job["id"]))
     except urllib.error.HTTPError as e:
         job.update(state=FAILED, error=f"送件 HTTP {e.code}：{e.read().decode('utf-8', 'replace')[:800]}")
         return
@@ -78,7 +102,7 @@ def _submit(job):
 def add(job_id, graph, dests, after=None, front=False, meta=None):
     """排一條。dests：輸出依序複製到專案裡的這些路徑（相對專案資料夾）。
     after＝(前一條編號, 第幾格, LoadImage 節點編號)：等前一條完成、檢查過，再取那一格換進這個節點送出。
-    H3 影片先過送件前檢查，沒過就丟 comfy.GateBlocked、不進帳本；過了記「待送出」，wait 送出前再檢查一次。其他的圖照舊直接送。"""
+    H3 影片排進來和送出前各查一次「掛的檔都在 已核可/」，不在就丟 comfy.GateBlocked、不進帳本；其他的圖照舊直接送。"""
     if os.path.exists(_file(job_id)):
         raise ValueError(f"{job_id} 已經在帳本裡")
     if after and not (after[1] == -1 or after[1] >= 0):
@@ -87,9 +111,10 @@ def add(job_id, graph, dests, after=None, front=False, meta=None):
         raise ValueError(f"節點 {after[2]} 不是 LoadImage")
     facts = comfy.h3_video_facts(graph)
     if facts:
-        pre = gate.validate_shot_preflight(facts, meta or {}, "add", after=list(after) if after else None)
-        if not pre["ok"]:
-            raise comfy.GateBlocked(pre)
+        bad = _not_approved({"graph": graph, "meta": meta or {}, "after": after})
+        if bad:
+            msg = "掛的檔不在 已核可/：" + "；".join(bad)
+            raise comfy.GateBlocked({"ok": False, "reasons": ["NOT_APPROVED"], "messages": bad, "message": msg})
     job = {"id": job_id, "graph": graph, "dests": list(dests), "after": list(after) if after else None, "front": front,
            "meta": meta or {}, "state": READY if facts and not after else WAIT, "added": time.time()}
     if not after and not facts:
@@ -114,15 +139,15 @@ def _finish(j, entry):
             shutil.copy2(src, dst)
             got.append(dst)
         j.update(state=DONE if got else FAILED, files=got, error=None if got else "沒有輸出")
-        if got and comfy.h3_video_facts(j["graph"]):   # H3 片段：完成就跑驗片包（4-生成與驗片.md §3），人看了才判定
+        if got and comfy.h3_video_facts(j["graph"]):   # H3 片段：完成就跑驗片包（5-生成.md §3），人看了才判定
             _review(j)
-    comfy.log({"job": j["id"], "prompt_id": j["prompt_id"], "sec": j.get("sec"), "files": j.get("files"),
+    comfy.log({"job": j["id"], "prompt_id": j["prompt_id"], "sec": j.get("sec"), "files": j.get("files"), "送出": comfy.graph_facts(j["graph"]),
                "error": j.get("error"), "cut": (j.get("review") or {}).get("cut"), "驗片包": (j.get("review") or {}).get("驗片包"),
                **j["meta"]})
 
 
 def _review(j):
-    """H3 片段完成就跑驗片包（4-生成與驗片.md §3）：量測寫進 4-影片/驗片/片名/，cut 結果記進帳本和生成紀錄。
+    """H3 片段完成就跑驗片包（5-生成.md §3）：量測寫進 4-影片/驗片/片名/，cut 結果記進帳本和生成紀錄。
     這只是量測和草稿，判定還是人看過才寫；剪接.py 沒看到驗片包和核可狀態不出片（5-結案.md §5）。
     首幀：接力取到的那一格，或節點圖釘在第 0 幀的那張圖；都沒有就不比第 0 幀"""
     video = j["files"][0]

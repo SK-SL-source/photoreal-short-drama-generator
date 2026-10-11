@@ -1,6 +1,6 @@
 """開工檢查：確認設定（設定.json＋設定.local.json）寫的路徑、ComfyUI、節點、模型檔、規則檔都在。每次開工、換電腦、改設定之後跑一次。
-用法：python 開工檢查.py
-✅ 正常；⚠️ 有退路（例：在地規則檔找不到，就只用 skill 內附的規則核心）；❌ 要先處理才能開工（結束碼 1）。
+用法：python 開工檢查.py [專案資料夾]（不給就掃目前資料夾，前提是裡面有 工單.md）
+✅ 正常；⚠️ 有退路（例：在地規則檔找不到，就只用 skill 內附的查表）；❌ 要先處理才能開工（結束碼 1）。
 """
 import json, os, shutil, subprocess, sys, urllib.request
 import comfy
@@ -122,13 +122,13 @@ else:
 
 # ---- 規則、lint、專案位置 ----
 if not C["local_rules"]:
-    print("  ", "沒有在地規則：只用 skill 內附的 references/規則核心.md")
+    print("  ", "沒有在地規則：只用 skill 內附的 references/查表-H3句型.md")
 for p in C["local_rules"]:
     check_file(p, "在地規則", "⚠️")
 for p in C["official_guides"]:
     check_file(p, "官方格式指南", "⚠️")
 if not C["official_guides"]:
-    print("  ", "沒有官方格式指南：格式照 規則核心.md §6")
+    print("  ", "沒有官方格式指南：格式照 查表-H3句型.md §6")
 if C["lint"] and os.path.exists(C["lint"]):
     say("✅", f"lint 用設定的外部版本：{C['lint']}")
 else:
@@ -138,6 +138,17 @@ else:
 check_file(C["projects_root"], "專案資料夾的上層", "⚠️")
 check_file(C["lessons"], "經驗庫", "⚠️")
 check_file(C["series_state"], "系列狀態", "⚠️")
+
+# ---- 專案資料夾：固定清單（SKILL.md）以外的檔案列出來 ----
+PROJECT_ITEMS = {"0-原始資料", "1-劇本.md", "2-資產.md", "2-鏡頭表.csv", "2-分鏡.md", "2-分鏡圖", "資產",
+                 "3-提示詞", "4-影片", "5-成片", "已核可", "工單.md", "_腳本"}
+proj = sys.argv[1] if len(sys.argv) > 1 else (os.getcwd() if os.path.isfile(os.path.join(os.getcwd(), "工單.md")) else None)
+if proj:
+    extra = sorted(n for n in os.listdir(proj) if n not in PROJECT_ITEMS and not n.startswith("."))
+    if extra:
+        say("⚠️", f"專案 {proj} 有固定清單以外的檔案或資料夾：{'、'.join(extra)}（清單見 SKILL.md；多出來的要嘛刪、要嘛寫進待決）")
+    else:
+        say("✅", f"專案 {proj}：沒有清單以外的檔案")
 
 print()
 print("開工檢查：" + (f"{n_bad} 個 ❌，先處理再開工" if n_bad else "可以開工"))

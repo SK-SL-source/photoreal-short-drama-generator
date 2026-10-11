@@ -83,3 +83,7 @@ settings.local.*
 backup/
 backups/
 archive/
+
+# 改版備份與待刪（本機，不上傳）
+_archive/
+待刪/
