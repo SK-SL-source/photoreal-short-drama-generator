@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_SLOTS = {
     "h3_ref2va": ("UNETLoader", "unet_name"), "h3_fl2va": ("UNETLoader", "unet_name"), "ace": ("UNETLoader", "unet_name"),
     "pdd_ref2va": ("MiniMaxH3PDDAccApply", "pdd_file"),
-    "qwen_image": ("UnetLoaderGGUF", "unet_name"),
+    "qwen_image": ("UNETLoader", "unet_name"),
     "h3_text_encoder": ("CLIPLoader", "clip_name"), "qwen_text_encoder": ("CLIPLoader", "clip_name"),
     "ace_text_encoder_1": ("DualCLIPLoader", "clip_name1"), "ace_text_encoder_2": ("DualCLIPLoader", "clip_name2"),
     "h3_video_vae": ("VAELoader", "vae_name"), "h3_audio_vae": ("VAELoader", "vae_name"),
@@ -24,7 +24,7 @@ PDD_MISSING = "正式檔位（PDD 8 步）跑不了，只能用備用的 base20�
 QWEN = "skill 不能自己生角色卡、場景卡、首幀，參考圖要自己準備"
 ACE = "不能生配樂"
 OPTIONAL = {"pdd_ref2va": PDD_MISSING, "MiniMaxH3PDDAccApply": PDD_MISSING,
-            "qwen_image": QWEN, "qwen_text_encoder": QWEN, "qwen_vae": QWEN, "UnetLoaderGGUF": QWEN,
+            "qwen_image": QWEN, "qwen_text_encoder": QWEN, "qwen_vae": QWEN,
             "ace": ACE, "ace_text_encoder_1": ACE, "ace_text_encoder_2": ACE, "ace_vae": ACE,
             "h3_fl2va": "不能用 h3_voice 生音色檔（從核可的對白剪就不需要），也不能用 I2VA"}
 COMFY_PY = "ComfyUI 可攜版是 python_embeded\\python.exe，桌面版和手動安裝通常是 ComfyUI 資料夾裡的 .venv\\Scripts\\python.exe"

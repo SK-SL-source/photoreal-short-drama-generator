@@ -282,9 +282,10 @@ def wait_for(job_id, pid, dests, timeout=3600, meta=None):
 # ---------- 圖 ----------
 
 def qwen_t2i(prompt, seed, prefix, w=1920, h=1088, steps=25):
-    """Qwen-Image 2.1 文字生圖（照官方範本：euler、simple、cfg 1；主模型用 GGUF 檔，ComfyUI-GGUF 載入）"""
+    """Qwen-Image 2.1 文字生圖（照官方範本：euler、simple、cfg 1；主模型用 Comfy-Org 官方 int8_convrot safetensors，
+    UNETLoader 載入——跟 h3_ref2va 同一種量化檔、同一個載入節點，已驗證能跑；GGUF 第三方量化檔測過不相容，見 CHANGELOG）"""
     return {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": M["qwen_image"]}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": M["qwen_image"], "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": M["qwen_text_encoder"],
                                                      "type": "qwen_image", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": M["qwen_vae"]}},
@@ -309,10 +310,10 @@ def stage_input(src, name, sub="drama"):
 
 
 def qwen_edit(prompt, image_names, seed, prefix, size=None, resolution=0, steps=25):
-    """Qwen-Image 2.1 編輯模式（照官方範本，主模型用 GGUF 檔）。image_names 依序＝<image1>、<image2>…；
-    size=None 時輸出跟著 image_1；size=(w,h) 時等於範本的 custom_size 開啟。"""
+    """Qwen-Image 2.1 編輯模式（照官方範本，主模型用 Comfy-Org 官方 int8_convrot safetensors，UNETLoader 載入）。
+    image_names 依序＝<image1>、<image2>…；size=None 時輸出跟著 image_1；size=(w,h) 時等於範本的 custom_size 開啟。"""
     g = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": M["qwen_image"]}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": M["qwen_image"], "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": M["qwen_text_encoder"],
                                                      "type": "qwen_image", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": M["qwen_vae"]}},
@@ -514,7 +515,7 @@ VOICE_TMPL = (
     "integrated_multimodal_description: [Shot 1] Realistic live-action footage in vertical 9:16 portrait framing, "
     "as one single continuous shot. A static close shot of one person sitting alone in a small quiet room, facing "
     "the camera, the head and shoulders filling the picture. Within the first half second the mouth opens on the "
-    "first syllable. @VOICE@ (S1), says: <d>[Chinese] @LINE@</d> Exactly as the voice stops, the lips close and the "
+    "first syllable. @VOICE@ (S1), says: <d>[@LANG@] @LINE@</d> Exactly as the voice stops, the lips close and the "
     "jaw ceases all speaking motion. The jaw and lips move naturally with every syllable, and the picture holds on "
     "the speaker through the end of the video.\n\n"
     "overall_soundscape: A quiet, dry indoor room tone continues evenly throughout, with one soft breath just "
@@ -523,9 +524,10 @@ VOICE_TMPL = (
 )
 
 
-def h3_voice(voice_desc, line, seed, prefix):
-    """還沒有核可的對白可以剪音色時才用：fl2va、416×736、158 幀、simple 20 步，只解音訊（開頭不切，第一個字才不會被切掉）"""
-    prompt = VOICE_TMPL.replace("@VOICE@", voice_desc).replace("@LINE@", line)
+def h3_voice(voice_desc, line, seed, prefix, lang="Chinese"):
+    """還沒有核可的對白可以剪音色時才用：fl2va、416×736、158 幀、simple 20 步，只解音訊（開頭不切，第一個字才不會被切掉）
+    lang：<d> 標籤裡的語言（H3 官方格式的語言標記，規則核心 §6；非中文台詞要照實寫，例如 lang="English"，不能留預設值）"""
+    prompt = VOICE_TMPL.replace("@VOICE@", voice_desc).replace("@LINE@", line).replace("@LANG@", lang)
     return {
         "20": {"class_type": "UNETLoader", "inputs": {"unet_name": M["h3_fl2va"],
                                                       "weight_dtype": "default"}},

@@ -10,8 +10,15 @@
 #   4. Xong thì Terminate pod. Endpoint serverless sẽ thấy volume ở /runpod-volume.
 #
 # QWEN_IMAGE_GGUF (tùy chọn, tự chọn file GGUF của Qwen-Image 2.1 chính, dùng sinh thẻ nhân vật/场景/首幀):
-#   QWEN_IMAGE_GGUF="Comfy-Org/Qwen-Image-2.1-GGUF split_files/diffusion_models/qwen_image_2.1-Q4_K_M.gguf" bash populate_volume.sh
-#   (repo/path ví dụ, kiểm lại tên thật trên HuggingFace trước khi chạy — chưa xác nhận)
+#   2026-10-11: repo "Comfy-Org/Qwen-Image-2.1-GGUF" KHÔNG tồn tại (đã kiểm, 401/not found) — đừng dùng.
+#   Đã thử "unsloth/Qwen-Image-2.1-GGUF" (file đúng version 2.1, tồn tại thật) nhưng GGUF của repo đó
+#   KHÔNG tương thích ComfyUI-GGUF: worker báo "Unknown model architecture!" ở detect_arch (xem
+#   movies/CuChiTunnel/工單.md "問題與經驗" nếu còn trong repo, hoặc lịch sử hội thoại 2026-10-11).
+#   city96/Qwen-Image-gguf và QuantStack/Qwen-Image-GGUF là bản Qwen-Image GỐC (không phải 2.1), không
+#   khớp text_encoder/vae 2.1 đã nạp ở trên — đừng trộn.
+#   => Chưa tìm được nguồn GGUF Qwen-Image 2.1 nào xác nhận chạy được với ComfyUI-GGUF. Trước khi thử file
+#   mới, xác nhận tương thích ở môi trường rẻ/miễn phí trước khi tốn pod-time tải+chạy thật.
+#   QWEN_IMAGE_GGUF="<repo> <path-trong-repo>" bash populate_volume.sh
 set -euo pipefail
 
 VOL="${VOL:-/workspace}"
