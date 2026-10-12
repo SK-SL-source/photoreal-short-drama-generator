@@ -103,26 +103,35 @@ for i, (path, *_, n) in enumerate(clips):
         if t + d > (n + 1) / FPS:
             print(f"⚠️ {name}：{os.path.basename(p)} 從鏡內 {t:g} 秒放、長 {d:.2f} 秒，超過這一條 {t + d - n / FPS:.2f} 秒")
         overlays.append([p, starts[i] / FPS + t, g])
-# ---- 成片只收核可片（5-結案.md §5）：每條片段要有 label；鏡頭表那一鏡的狀態是「過（檔名、日期）」且含這個檔名；驗片包在；
+# ---- 成片只收核可片（5-結案.md §5）：每條片段要有 label；總表.md 那一條的判定是「通過…」；驗片包在；
 #      驗片包 cut 標「要看」的要有人工判定檔 片名_驗片.md；取段照分鏡卡「成片取」，台詞窗不能被切到。
-#      靜態圖不在此限。缺一條就 ❌ 不出片，--dry-run 也報
+#      靜態圖不在此限。缺一條就 ❌ 不出片，--dry-run 也報。2.0.1：鏡頭表、分鏡卡讀 已核可/3-分鏡/，判定讀 4-影片/驗片/總表.md
 問題 = []
 if not all(stills):
     TOL = 1 / FPS + 1e-6   # 一格
-    md_path = os.path.join(PROJ, "2-分鏡.md")
+    md_path = os.path.join(PROJ, "已核可", "3-分鏡", "2-分鏡.md")   # 2.0.1：讀核可的分鏡卡，根目錄不放複本
     cards = {}
     if os.path.isfile(md_path):
         cards, _ = gate.find_cards(open(md_path, encoding="utf-8-sig").read().replace("\r\n", "\n"),
                                    [re.sub(r"[AB]$", "", (c.get("label") or "").strip()) for c in cfg["clips"] if isinstance(c, dict) and c.get("label")])
     else:
         問題.append(f"❌ 找不到 {md_path}：取段要照分鏡卡的「成片取」核對")
-    table = os.path.join(PROJ, "2-鏡頭表.csv")
+    table = os.path.join(PROJ, "已核可", "3-分鏡", "2-鏡頭表.csv")
     rows = {}
     if not os.path.isfile(table):
-        問題.append(f"❌ 找不到鏡頭表 {table}：成片只能在專案資料夾出，片段核可了沒從鏡頭表讀")
+        問題.append(f"❌ 找不到核可的鏡頭表 {table}：第 3 站過了才能出片")
     else:
         with open(table, encoding="utf-8-sig", newline="") as f:
             rows = {(r.get("鏡號") or "").strip(): {k.strip(): (v or "").strip() for k, v in r.items() if k} for r in csv.DictReader(f)}
+    # 2.0.1：片段的判定讀 4-影片/驗片/總表.md（驗片量測.py 總表 從每條 {片名}_驗片.md 彙整），鏡頭表不回填
+    verdicts, summary = {}, os.path.join(PROJ, "4-影片", "驗片", "總表.md")
+    if not os.path.isfile(summary):
+        問題.append(f"❌ 找不到 {os.path.relpath(summary, PROJ)}：先跑 python _腳本/驗片量測.py 總表")
+    else:
+        for ln in open(summary, encoding="utf-8"):
+            c = [x.strip() for x in ln.strip().strip("|").split("|")] if ln.startswith("|") else []
+            if len(c) >= 3 and c[1].endswith((".mp4", ".mov", ".mkv", ".webm")):
+                verdicts[c[1]] = c[2]
     for i, ((path, s, e, sp, n), still, label) in enumerate(zip(clips, stills, labels)):
         if still:
             continue
@@ -138,9 +147,9 @@ if not all(stills):
             if rows:
                 問題.append(f"❌ {label}：鏡頭表沒有 {shot}")
             continue
-        status = row.get("狀態", "")
-        if not (status.startswith("過") and (base in status or stem in status)):
-            問題.append(f"❌ {label}：鏡頭表狀態是「{status or '沒寫'}」，要是「過（{base}、日期）」才進成片（使用者逐條核可，4-生成與驗片.md §3）")
+        jd = verdicts.get(base, "")
+        if not jd.startswith("通過"):
+            問題.append(f"❌ {label}：總表.md 裡 {base} 的判定是「{jd or '沒有這一列'}」，要是「通過…」才進成片（4-生成.md §3）")
         pack = os.path.join(os.path.dirname(path), "驗片", stem, "驗片包.md")
         if not os.path.isfile(pack):
             問題.append(f"❌ {label}：沒有驗片包 {os.path.relpath(pack, PROJ)}（先跑 python _腳本/驗片量測.py pack {os.path.relpath(path, PROJ)}）")

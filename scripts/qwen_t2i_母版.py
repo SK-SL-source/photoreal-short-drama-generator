@@ -28,9 +28,7 @@ LAYOUT = {
 TASK = {"board": "A premium commercial studio fashion character board featuring {who}.",
         "full": "A premium commercial studio fashion portrait of {who}.",
         "three": "A premium commercial studio fashion reference of {who}."}
-NO = ("Do not make it cinematic, gritty, documentary, raw, heavily textured, or aged.\n"
-      "Do not use film grain. Do not use dramatic lighting. Do not make the skin rough or overly realistic.\n"
-      "No text, no labels, no captions.")
+NO = "No text, no labels, no captions."   # 2.0.1：Do not… 段刪掉（cfg 1 下負面句無效，畫風.md）
 SIZE = {"board": (1088, 1920), "full": (1088, 1920), "three": (1920, 1088)}
 FORBIDDEN_ITEM_WORDS = ["glossy", " pu ", "patent", "nylon", "polyester", "sequin", "metallic fabric", "shiny"]
 F, M = ("She", "Her", "her"), ("He", "His", "his")

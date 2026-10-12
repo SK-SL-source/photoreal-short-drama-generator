@@ -21,7 +21,7 @@
 """
 import argparse, json, math, os, re, subprocess, sys
 import numpy as np
-from comfy import CFG, need_file
+from comfy import CFG, need_file, PROJ
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1039,6 +1039,30 @@ def cmd_pack(args):
     print(f"\n→ {p}")
 
 
+# ============================================================ 13. 總表：判定彙整（2.0.1）
+
+def cmd_summary(args):
+    """掃 4-影片/ 和 已核可/4-生成/ 的 {片名}_驗片.md，抄「判定：」那一行，寫成 4-影片/驗片/總表.md；剪接.py 只認這張表的「通過」"""
+    rows = []
+    for d in ("4-影片", os.path.join("已核可", "4-生成")):
+        full = os.path.join(PROJ, d)
+        if not os.path.isdir(full):
+            continue
+        for n in sorted(os.listdir(full)):
+            if not n.endswith("_驗片.md"):
+                continue
+            stem = n[:-len("_驗片.md")]
+            text = open(os.path.join(full, n), encoding="utf-8").read()
+            m = re.search(r"^判定：(.*)$", text, re.M)
+            rows.append((stem.split("_")[0], stem + ".mp4", (m.group(1).strip() if m else "未核驗"), f"{d}/{n}".replace("\\", "/")))
+    out = os.path.join(PROJ, "4-影片", "驗片", "總表.md")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    md = ["# 驗片總表（從每條 {片名}_驗片.md 的「判定：」行彙整；剪接.py 讀這張表）", "", "| 鏡 | 片名 | 判定 | 判定檔 |", "|---|---|---|---|"]
+    md += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in sorted(rows)]
+    open(out, "w", encoding="utf-8").write("\n".join(md) + "\n")
+    emit(args, [f"{len(rows)} 條 → {out}"] + [f"{a} {b}：{c[:40]}" for a, b, c, _ in sorted(rows)], {"rows": rows, "out": out})
+
+
 # ============================================================ 指令列
 
 def _paths(args):
@@ -1132,6 +1156,9 @@ def main():
     p = sp.add_parser("av", help="畫面和聲音一樣長嗎（解碼實算）")
     p.add_argument("videos", nargs="+", help="影片或資料夾")
     p.set_defaults(fn=cmd_av)
+
+    p = sp.add_parser("總表", help="彙整每條 {片名}_驗片.md 的「判定：」行成 4-影片/驗片/總表.md（剪接.py 讀這張表）")
+    p.set_defaults(fn=cmd_summary)
 
     p = sp.add_parser("pack", help="驗片包：一次跑完量測，出縮圖、接點試看片和驗片紀錄草稿")
     p.add_argument("video", help="影片")

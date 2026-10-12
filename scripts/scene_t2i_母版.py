@@ -11,8 +11,7 @@ PHOTO = ("Photographic style: premium architectural lifestyle photography, clean
          "soft warm light, polished but realistic finish.")
 CAMERA = "Camera: eye-level, wide but natural angle, clear spatial depth, foreground, midground, and background all readable."
 BLANK = "All signs, labels and packaging are plain and blank, with no lettering; the space is empty of people."
-NO = ("Do not generate horror mood, cold fluorescent ugliness, dirty decay, abandoned atmosphere, sterile showroom styling, or CGI-looking rendering. "
-      "{people} No text.")
+NO = "{people} No text."   # 2.0.1：Do not… 段刪掉（cfg 1 下負面句無效，畫風.md）
 LIGHT = {   # 光態：FEEL 的形容、SPACE 的最後一句（{via} 填光從哪來）、LIGHTING 的項目
     "sunny_afternoon": ("sunlit", "Warm late-afternoon sunlight {via}, creating bright sun patches and soft natural shadows.",
                         ["warm natural sunlight", "bright ambient light", "sun patches on surfaces", "soft shadow depth", "gentle inviting glow"]),

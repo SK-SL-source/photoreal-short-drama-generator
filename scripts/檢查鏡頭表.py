@@ -94,7 +94,7 @@ def parse_take(text):
 def parse_dialogue_window(card):
     """分鏡卡裡機器讀的台詞窗（動作卡 J）：台詞窗 0.5–3.5 秒；拆段的鏡寫 台詞窗 B 0.3–1.3 秒。回傳 {段: (起, 迄)}；沒寫就空"""
     return {(m.group(1) or ""): (float(m.group(2)), float(m.group(3)))
-            for m in re.finditer(r"台詞窗\s*(?:([AB])\s*段?\s*)?" + RANGE, card or "")}
+            for m in re.finditer(r"台詞窗[：:]?\s*(?:([AB])\s*段?\s*)?" + RANGE, card or "")}
 
 
 SEC_MAX = CFG["max_frames"] / 24   # 單次生成的上限（這台機器量過的）；成片秒數本身沒有下限，只要大於 0
@@ -224,8 +224,8 @@ def main(path):
             if 同格兩人沒分句(台詞):
                 問題.append(f"⚠️ {鏡}：同一格有兩個人的台詞但沒分句——一句一行或用「｜」隔開，鎖定後送件前檢查才對得上提示詞的 <d>。")
         # 3) 連戲三欄
-        for 欄 in ["站位(誰左誰右)", "視線(看著什麼)", "手上道具"]:
-            值 = (r.get(欄) or "").strip()
+        for 欄, 別名 in [("站位", "站位(誰左誰右)"), ("視線", "視線(看著什麼)"), ("手上道具", "手上道具")]:   # 表頭照 3-分鏡.md §2；舊表頭也認
+            值 = (r.get(欄) or r.get(別名) or "").strip()
             if not 值:
                 問題.append(f"⚠️ {鏡}：「{欄.split('(')[0]}」沒填——不填的話 AI 會自己亂決定。")
         # 4) 參考圖

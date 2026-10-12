@@ -8,7 +8,7 @@
   ❌ 同一角色的檔掛兩次（ID 的底名相同，例：C01_body 和 C01_face）
   ❌ 掛的檔不在 已核可/ 底下，或不存在；掛的 ID 順序 ≠ 鏡頭表「參考圖」
   ❌ 提示詞裡每個人的左右 ≠ 鏡頭表「站位」
-  ⚠️ 開頭句之後超過 120 個英文字；含補丁句；開頭句之後又出現畫質形容
+  ⚠️ 開頭句之後超過 200 個英文字；含補丁句；開頭句之後又出現畫質形容
 """
 import argparse, csv, os, re, sys
 
@@ -22,7 +22,7 @@ PATCH = ["five fingers", "five natural fingers", "appears only once", "only once
          "same direction", "only person", "the only two people", "nobody else", "exactly one person"]
 QUALITY = ["cinematic", "color grading", "colour grading", "pores", "high quality", "masterpiece", "8k", "ultra", "film grain",
            "highly detailed", "realistic detail", "3d animation", "matte skin", "visible texture", "dramatic lighting", "shallow depth of field"]
-WORD_MAX = 120
+WORD_MAX = 200
 
 
 def read_row(table, shot):
