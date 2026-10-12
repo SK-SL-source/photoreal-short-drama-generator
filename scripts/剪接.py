@@ -148,8 +148,8 @@ if not all(stills):
                 問題.append(f"❌ {label}：鏡頭表沒有 {shot}")
             continue
         jd = verdicts.get(base, "")
-        if not jd.startswith("通過"):
-            問題.append(f"❌ {label}：總表.md 裡 {base} 的判定是「{jd or '沒有這一列'}」，要是「通過…」才進成片（4-生成.md §3）")
+        if not (jd.startswith("通過") or jd.startswith("過")):   # 「過（剪接補：…）」「過（接受：…）」也算（4-生成.md §4）
+            問題.append(f"❌ {label}：總表.md 裡 {base} 的判定是「{jd or '沒有這一列'}」，要是「過…」或「通過…」才進成片（4-生成.md §3、§4）")
         pack = os.path.join(os.path.dirname(path), "驗片", stem, "驗片包.md")
         if not os.path.isfile(pack):
             問題.append(f"❌ {label}：沒有驗片包 {os.path.relpath(pack, PROJ)}（先跑 python _腳本/驗片量測.py pack {os.path.relpath(path, PROJ)}）")
