@@ -50,6 +50,9 @@ RUN git clone https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc /comfy
 # torch 先裝、釘 cu128：ComfyUI requirements.txt 寫沒上限的 torch，預設可能抓到需要新驅動的 cu13 wheel
 # sageattention==1.0.6 (PyPI, pure Triton kernel — no nvcc/devel image needed, works on Ampere+ incl. A40)
 # đặt sau torch để dùng chung triton của torch, trước bước requirements loop (không có requirements.txt riêng)
+# UV_HTTP_TIMEOUT cao hơn default (30s): mạng build local (QEMU amd64 trên Mac) đo được rất chậm
+# (~1.2MB/s) và nhiều gói CUDA to (500-600MB) tải đồng thời, default timeout làm uv báo lỗi giữa chừng
+ENV UV_HTTP_TIMEOUT=300
 RUN uv pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
       --index-url https://download.pytorch.org/whl/cu128 \
     && uv pip install sageattention==1.0.6 \
