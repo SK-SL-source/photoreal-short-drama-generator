@@ -5,6 +5,14 @@ trữ Network Volume), có việc mới đánh thức, xong tự thu về 0. S�
 y như cũ trên Mac (xem `scripts/佇列.py`, `scripts/檢查量產Gate.py`); thư mục này chỉ thay lớp "gửi việc đi
 GPU bằng cách nào".
 
+**2026-10-19/20 — tách endpoint (xem dramaclaw's `runpod-h3-qwen-endpoints.md`):** image
+ở thư mục này (`runpod/`) giờ CHỈ còn MiniMax H3 — Qwen-Image 2.1 + Qwen-Image-Edit-2511
+đã tách sang `../runpod-qwen/Dockerfile` (1 image dùng chung cho cả 2 endpoint Qwen,
+không cần custom node nào). Mọi nội dung README dưới đây nói về model/pipeline H3 vẫn
+đúng; phần nhắc tới Qwen-Image/GGUF (ví dụ bảng kích thước Network Volume) là thông tin
+lịch sử từ lúc còn dùng chung 1 image — volume vẫn giữ nguyên, chỉ endpoint/image bị
+tách, không cần làm lại bước nạp model.
+
 **2026-10-11 đã chạy pilot thật (không chỉ là thiết kế trên giấy):** triển khai ở CA-MTL-1, build + push
 image, nạp model, tạo endpoint, gửi 5 job thật (object_info, nhạc ACE, H3 draft, H3 formal × 2) đều thành
 công, chi phí đo thật khoảng $0.28 (GPU $0.05 + volume ngày hôm đó $0.23). Thời gian đo được và các lỗi gặp

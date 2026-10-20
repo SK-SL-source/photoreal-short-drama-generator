@@ -1,0 +1,8 @@
+# 讓 ComfyUI 在 Network Volume 找模型。用新式資料夾名（和本機 README §需要什麼 的表一致），
+# 不是 worker-comfyui 用的 unet/clip 舊名——這個 image 是自己的 extra_model_paths.yaml，不用跟它相容。
+runpod_volume:
+  base_path: /runpod-volume
+  diffusion_models: models/diffusion_models/
+  text_encoders: models/text_encoders/
+  vae: models/vae/
+  pdd_acc: models/pdd_acc/
