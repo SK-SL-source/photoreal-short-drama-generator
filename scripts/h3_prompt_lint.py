@@ -1,11 +1,11 @@
-"""H3 提示詞 lint — 任何提示詞送 ComfyUI 之前必過（skill 內附版，照 references/規則核心.md 實作）。
+"""H3 提示詞 lint — 任何提示詞送 ComfyUI 之前必過（skill 內附版，照 references/查表-H3句型.md 實作）。
 用法：python h3_prompt_lint.py <prompt.txt> [--refs N|名稱,名稱] [--frames N] [--mode ref2va|i2va|fl2va|l2va|t2va]
 離開碼 0=過 1=有 ❌
-規則來源：官方 base-en/ref-en 格式（規則核心 §6）＋驗證過的寫法（❌）與測試中的假設（⚠️）（規則核心 §7）。
+規則來源：官方 base-en/ref-en 格式（查表 §6）＋驗證過的寫法（❌）與測試中的假設（⚠️）（查表 §7）。
 模式從提示詞自動判斷：有 subject_definitions 段＝參考模式（Ref2VA）；
 第一行是官方對齊句＝I2VA／FL2VA／L2VA；第一行就是 integrated_multimodal_description＝T2VA。各模式只檢查該模式的官方格式。
 專案登記表（SCENE_LANDMARKS、MULTI_STATE_BOARDS、SCENE_PART_OF、CHARACTER_PHRASES）預設是空的，專案要用就在自己 _腳本 的複本裡照註解的格式填。
-景別（規則核心 §4.2、§5.2、§7.5、§7.15）：逐鏡讀景別（各鏡第一句的景別詞，[Shot 1] 也看 summary）；中近景以內寫了畫面外的內容逐類 ⚠️，3 類以上再加一條構圖風險 ⚠️；
+景別（查表 §4.2、§5.2、§7.5、§7.15）：逐鏡讀景別（各鏡第一句的景別詞，[Shot 1] 也看 summary）；中近景以內寫了畫面外的內容逐類 ⚠️，3 類以上再加一條構圖風險 ⚠️；
 鏡頭描述寫到畫面邊界外的穿著或腳才 ❌。明示在畫面外的（outside the frame、below the bottom edge of the frame…）和伸進畫面碰臉的手不算畫面外的內容。
 """
 import os, re, sys
@@ -52,7 +52,7 @@ ODD_SIZE = {"tight close-up": 5, "big close-up": 5, "close shot": 4, "medium clo
 ODD_RE = re.compile(r"(?<!extreme )\b(tight close-up|big close-up|medium close shot|close shot|medium-wide shot|medium wide shot|wide shot|long shot)\b", re.I)
 BOUNDARY = re.compile(r"\bThe frame shows\b|\bfills (?:the whole|most of the) frame\b|\bframes <Subject \d+> from\b|\bframes (?:her|him|them) from\b", re.I)
 BOUNDARY_LEVEL = [(r"hairline", 5), (r"collarbones?", 4), (r"middle of (?:her|his) chest|mid-chest", 3), (r"waist|hips", 2), (r"\bfeet\b", 1)]
-# 中近景以內寫了畫面外的東西，H3 可能把景別拉寬：單一類 3/3 撐住，3 類 2/3 鬆開，全部疊上 3/3 翻成中景（規則核心 §7.5）
+# 中近景以內寫了畫面外的東西，H3 可能把景別拉寬：單一類 3/3 撐住，3 類 2/3 鬆開，全部疊上 3/3 翻成中景（查表 §7.5）
 INTERIOR_ANCHOR = r"indoors inside|reads plainly as an interior"
 AT_LANDMARK = r"\b(?:stands?|standing|sits?|sitting|leans?|leaning) (?:at|by|beside|in front of|behind|against) (?:the|a)\b"
 BELOW_WAIST = r"\b(?:trousers|pants|jeans|skirt|shorts|shoes|sneakers|boots|socks|feet|knees|legs)\b"
@@ -163,7 +163,7 @@ def _off_frame(text, level):
 
 
 def _check_size(sm, sd, ra, dd, E, W):
-    """景別（規則核心 §4.2、§5.2、§7.5、§7.15），逐鏡檢查：每一鏡只算自己的內容。
+    """景別（查表 §4.2、§5.2、§7.5、§7.15），逐鏡檢查：每一鏡只算自己的內容。
     共用的內容（定義句、[Shot 1] 前的風格句）只在每一鏡都是中近景以內時才算，因為較寬的鏡本來就看得到。
     回傳 ([Shot 1] 的 level, 各鏡最寬的 level)；0 遠景 … 5 特寫，看不出來是 None"""
     parts = re.split(r"\[Shot (\d+)\]", dd)
@@ -174,7 +174,7 @@ def _check_size(sm, sd, ra, dd, E, W):
     t_sum = m_sum.group(1).lower() if m_sum else None
     odd = sorted(set(x.lower() for x in ODD_RE.findall(sm + "\n" + dd)))
     for t in odd:
-        W.append(f"非標準的景別說法「{t}」——推薦寫法是 3-提示詞.md §4 的六個標準詞")
+        W.append(f"非標準的景別說法「{t}」——推薦寫法是 4-影片提示詞.md §3 的六個標準詞")
     levels = []
     for i, (n, body) in enumerate(shots):
         head = re.split(r"(?<=[.!?])\s", body, maxsplit=1)[0]
@@ -182,13 +182,13 @@ def _check_size(sm, sd, ra, dd, E, W):
         t_first = m_first.group(1).lower() if m_first else None
         if i == 0:
             if sm and not t_sum:
-                W.append("summary 沒寫景別詞（推薦寫法：extreme wide shot／full shot／medium shot／medium close-up／close-up／extreme close-up；規則核心 §4.2）")
+                W.append("summary 沒寫景別詞（推薦寫法：extreme wide shot／full shot／medium shot／medium close-up／close-up／extreme close-up；查表 §4.2）")
             if not t_first:
-                W.append("[Shot 1] 第一句沒寫景別詞（推薦寫法：景別詞放在 [Shot 1] 開頭；規則核心 §4.2）")
+                W.append("[Shot 1] 第一句沒寫景別詞（推薦寫法：景別詞放在 [Shot 1] 開頭；查表 §4.2）")
             if t_sum and t_first and t_sum != t_first:
                 W.append(f"summary 寫 {t_sum}、[Shot 1] 寫 {t_first}——兩處的景別詞不一樣")
             if not BOUNDARY.search(body):
-                W.append("沒有畫面邊界句（例：The frame shows her from the top of her head to her waist.；規則核心 §4.2）")
+                W.append("沒有畫面邊界句（例：The frame shows her from the top of her head to her waist.；查表 §4.2）")
         t = t_first or (t_sum if i == 0 else None)
         level = dict(SIZE_TERMS)[t] if t else None
         if level is None:
@@ -207,14 +207,14 @@ def _check_size(sm, sd, ra, dd, E, W):
             continue
         tag, name = f"[Shot {n}] " if tag_shots else "", SIZE_NAMES[level]
         if level == 4 and not re.search(r"face fills most of the frame", body, re.I):
-            W.append(f"{tag}近景（close-up）缺「her face fills most of the frame」（3-提示詞.md §4 每級句型）")
+            W.append(f"{tag}近景（close-up）缺「her face fills most of the frame」（4-影片提示詞.md §3 每級句型）")
         if level == 4 and re.search(r"\bhairline\b", body, re.I):
             W.append(f"{tag}close-up 卻寫到髮際線的邊界——那是特寫，要寫 extreme close-up（近景＝close-up，特寫＝extreme close-up）")
         if level == 5:
             if not re.search(r"outside the frame|cut off by the edges? of the frame", body, re.I):
-                W.append(f"{tag}特寫沒寫被切掉的部位（例：the top of her head, her neck and her collar are outside the frame；規則核心 §7.15）")
+                W.append(f"{tag}特寫沒寫被切掉的部位（例：the top of her head, her neck and her collar are outside the frame；查表 §7.15）")
             if re.search(r"character sheet", sd, re.I):
-                W.append(f"{tag}特寫的角色參考寫成 character sheet——特寫要掛頭肩裁圖（規則核心 §5.2：全身卡 1/3、裁圖 3/3）")
+                W.append(f"{tag}特寫的角色參考寫成 character sheet——特寫要掛頭肩裁圖（查表 §5.2：全身卡 1/3、裁圖 3/3）")
         if level < 3:
             continue
         hits, conflict = _off_frame(body, level)
@@ -228,11 +228,11 @@ def _check_size(sm, sd, ra, dd, E, W):
                     hits.append("場景地標清單")
                     break
         for k in hits:
-            W.append(f"{tag}{name}寫了畫面外的內容：{k}——H3 可能把景別拉寬（規則核心 §7.5）")
+            W.append(f"{tag}{name}寫了畫面外的內容：{k}——H3 可能把景別拉寬（查表 §7.5）")
         if len(hits) >= 3:
-            W.append(f"{tag}構圖風險：{name}同時寫了 {len(hits)} 類畫面外的內容（{'、'.join(hits)}）——實測 3 類疊在一起 2/3 鬆一級、全部疊上 3/3 翻成中景；送前逐條確認能不能刪（規則核心 §7.5）")
+            W.append(f"{tag}構圖風險：{name}同時寫了 {len(hits)} 類畫面外的內容（{'、'.join(hits)}）——實測 3 類疊在一起 2/3 鬆一級、全部疊上 3/3 翻成中景；送前逐條確認能不能刪（查表 §7.5）")
         if conflict:
-            E.append(f"{tag}{name}的畫面只到胸口中段以上，鏡頭描述卻寫到 {'、'.join(conflict)}——和畫面邊界句互相衝突；刪掉，或改寫成這個景別看得到的（規則核心 §7.5）")
+            E.append(f"{tag}{name}的畫面只到胸口中段以上，鏡頭描述卻寫到 {'、'.join(conflict)}——和畫面邊界句互相衝突；刪掉，或改寫成這個景別看得到的（查表 §7.5）")
     widest = min(levels) if all(lv is not None for lv in levels) else None
     return levels[0], widest
 
@@ -373,7 +373,7 @@ def _lint_ref(p, n_refs=None, ref_names=(), frames=None, entry=None):
         if re.search(PROP_WORDS, line, re.I) and not re.search(r"\b(woman|man|girl|boy|figure|interior|room|workshop|shop|bedroom|kitchen|hall|courtyard|street|house|alley|market|environment|set)\b", line, re.I):
             if not re.search(SURFACE_PHRASES, line, re.I) and not re.search(SURFACE_PHRASES, dd[:600], re.I):
                 E.append(f"道具 <Subject {m.group(1)}> 沒有檯面錨：要寫在哪個檯面／誰的手上")
-    for rn in ref_names if widest is None or widest < 3 else ():  # 每一鏡都是中近景以內才不列地標（規則核心 §7.5）
+    for rn in ref_names if widest is None or widest < 3 else ():  # 每一鏡都是中近景以內才不列地標（查表 §7.5）
         sid = rn.split("-")[0].upper()
         for lm, pat in SCENE_LANDMARKS.get(sid, {}).items():
             if not re.search(pat, dd, re.I):

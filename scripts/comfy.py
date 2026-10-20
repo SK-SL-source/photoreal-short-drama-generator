@@ -5,7 +5,7 @@
 ffmpeg 沒有設定、系統也找不到時，改用這個 Python 環境裡 imageio-ffmpeg 附的那一支。
 其他腳本都從這裡拿設定（from comfy import CFG）。用設定裡的 python 跑。
 """
-import hashlib, json, os, secrets, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import hashlib, json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 try:
     import imageio_ffmpeg   # 選用：系統沒有 ffmpeg 時用它附的那一支
 except ImportError:
@@ -81,7 +81,7 @@ def open_chrome_once(url=BASE):
 
 
 class GateBlocked(Exception):
-    """H3 影片沒過送件前檢查（references/4-生成與驗片.md §1）。result＝檢查結果：reasons 是機器讀的代碼，message 給人看"""
+    """H3 影片沒過送件前檢查（references/4-生成.md §1）。result＝檢查結果：reasons 是機器讀的代碼，message 給人看"""
     def __init__(self, result):
         super().__init__(result["message"])
         self.result = result
@@ -125,27 +125,16 @@ def h3_video_facts(graph):
             "n_refs": len(refs) if mode == "ref" else len(images)}
 
 
-_permits = {}   # 一次性通行證 {token: (專案, 佇列條目, 節點圖指紋)}：送出前檢查過了才發，用一次就作廢
 _rp_free_next = False   # backend=runpod：free() 設 True；下一個真的送出的工作帶 free_first，之後清成 False（見 free()、_post）
 
 
-def _issue_permit(job, key):
-    """只給 檢查量產Gate.validate_shot_preflight 在送出前那一次檢查過了呼叫：發一張綁這個專案、這一條、這一張節點圖的通行證"""
-    token = secrets.token_hex(16)
-    _permits[token] = (PROJ, job, key)
-    return token
-
-
-def _post(path, obj, permit=None, job=None):
-    """送 H3 影片要帶 permit：佇列條目 job 剛過送出前檢查時發的一次性通行證，要和這個專案、這一條、這一張節點圖都對得上，用過就作廢。
-    檢查結果的 dict 本身不算數，所以 H3 影片只能經佇列送：comfy.run、直接送件、重播舊的通行證都送不出去。
+def _post(path, obj, job=None):
+    """H3 影片只能經佇列送：佇列送出前查過「掛的檔都在 已核可/」才帶 job 編號來；沒有 job 的 H3 影片（comfy.run、直接送件）不送。
     backend=runpod：/prompt 不送本機、改送 RunPod（見 rp.submit），回傳的 prompt_id 其實是 RunPod 的 job id，
     之後 history_entry／佇列.advance 認的也是這個 id，不用管它本來是誰的號碼。"""
-    if path == "/prompt":
-        facts = h3_video_facts(obj["prompt"])
-        if facts and (_permits.pop(permit, None) if isinstance(permit, str) else None) != (PROJ, job, facts["key"]):
-            msg = "H3 影片要經佇列送（佇列.add，由 wait 送出）：送出前檢查過了才有一次性的通行證，comfy.run 和直接送件都不送 H3 影片"
-            raise GateBlocked({"ok": False, "reasons": ["NO_PERMIT"], "messages": [msg], "message": msg})
+    if path == "/prompt" and job is None and h3_video_facts(obj["prompt"]):
+        msg = "H3 影片要經佇列送（佇列.add，由 wait 送出）：送出前只查掛的檔都在 已核可/ 裡；comfy.run 和直接送件都不送 H3 影片"
+        raise GateBlocked({"ok": False, "reasons": ["NOT_VIA_QUEUE"], "messages": [msg], "message": msg})
     if BACKEND == "runpod":
         global _rp_free_next
         import rp
@@ -222,6 +211,37 @@ def object_info(ct):
         return {}
 
 
+def graph_facts(graph):
+    """送件紀錄要記的事實（SKILL.md 核可資料夾那一節）：實際送出的提示詞、參考圖和聲音檔名（照順序）、seed、尺寸、幀數、步數、cfg、取樣器、模型檔"""
+    f = {"prompt": None, "refs": [], "seed": None, "width": None, "height": None, "frames": None, "steps": None, "cfg": None,
+         "sampler": None, "scheduler": None, "models": {}}
+    for k in sorted(graph, key=lambda x: int(x) if str(x).isdigit() else 0):
+        n = graph[k]
+        ct, i = n.get("class_type"), n.get("inputs", {})
+        if isinstance(i.get("prompt"), str):
+            f["prompt"] = i["prompt"]
+        if ct in ("LoadImage", "LoadAudio"):
+            f["refs"].append(i.get("image") or i.get("audio"))
+        if ct == "KSampler":
+            f.update(seed=i.get("seed"), steps=i.get("steps"), cfg=i.get("cfg"), sampler=i.get("sampler_name"), scheduler=i.get("scheduler"))
+        if ct == "RandomNoise":
+            f["seed"] = i.get("noise_seed")
+        if ct == "BasicScheduler":
+            f.update(steps=i.get("steps"), scheduler=i.get("scheduler"))
+        if ct == "KSamplerSelect":
+            f["sampler"] = i.get("sampler_name")
+        if ct == "MiniMaxH3PDDAccApply":
+            f.update(steps=int(i.get("nfe")), sampler="euler (PDD)")
+        if "width" in i and "height" in i:
+            f["width"], f["height"] = i["width"], i["height"]
+        if ct in ("MiniMaxH3ReferenceToVideo", "MiniMaxH3ImageToVideo"):
+            f["frames"] = i.get("length")
+        for key in ("unet_name", "clip_name", "vae_name", "pdd_file"):
+            if key in i:
+                f["models"][f"{ct}.{key}"] = i[key]
+    return f
+
+
 def log(rec):
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     rec["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -230,7 +250,9 @@ def log(rec):
 
 
 def run(job_id, graph, dests, timeout=3600, meta=None):
-    """送一個圖並等完成；輸出依順序複製到 dests。回傳 (複製後路徑, 錯誤, 秒數)。H3 影片不能用這個送（_post 會擋），要排進佇列"""
+    """送一個圖並等完成；輸出依順序複製到 dests。回傳 (複製後路徑, 錯誤, 秒數)。H3 影片不能用這個送（_post 會擋），要排進佇列。
+    生成紀錄的「送出」＝graph_facts：實際送出的提示詞、參考圖順序、seed、尺寸、步數"""
+    meta = {"送出": graph_facts(graph), **(meta or {})}
     try:
         resp = json.loads(_post("/prompt", {"prompt": graph, "client_id": "short-drama"}))
     except urllib.error.HTTPError as e:
@@ -311,7 +333,8 @@ def stage_input(src, name, sub="drama"):
 
 def qwen_edit(prompt, image_names, seed, prefix, size=None, resolution=0, steps=25):
     """Qwen-Image 2.1 編輯模式（照官方範本，主模型用 Comfy-Org 官方 int8_convrot safetensors，UNETLoader 載入）。
-    image_names 依序＝<image1>、<image2>…；size=None 時輸出跟著 image_1；size=(w,h) 時等於範本的 custom_size 開啟。"""
+    image_names 依序＝<image1>、<image2>…；<image1> 是畫布、構圖跟它走（合成新畫面放場景卡或空景板，角色、道具放後面）；
+    size=None 時輸出跟著 image_1；size=(w,h) 時等於範本的 custom_size 開啟。"""
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": M["qwen_image"], "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": M["qwen_text_encoder"],
